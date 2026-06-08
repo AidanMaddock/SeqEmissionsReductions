@@ -21,7 +21,7 @@ sort(unique(co2$ipcc_code_2006_for_standard_report))
 # Define map of IPCC industry codes (2006) to sectors
 sector_map <- tribble(
   ~ipcc_code_2006_for_standard_report, ~Sector,
-  "1.A.1.a", "Energy",
+  "1.A.1.a", "Electricity",
   
   "1.A.2", "Industry",
   "2.A.1", "Industry",
@@ -104,7 +104,11 @@ emissions_combined <- emissions_combined %>%
   
   mutate( 
     year = substr(year, 3, nchar(year))
-  ) 
+  ) %>%
+  
+  rename(Module = Sector)
+
+
   
 
 # Save outputs 
