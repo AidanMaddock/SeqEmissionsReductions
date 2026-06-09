@@ -1,6 +1,7 @@
 library(tidyverse)
 library(readr)
 library(hpfilter)
+library(readxl)
 source("02_r_scripts/00_project_functions.R")
 
 #=========================================================
@@ -8,12 +9,9 @@ source("02_r_scripts/00_project_functions.R")
 # File: 03_controls_cleaning
 # Description: This file cleans the control variables and outputs
 # a single combined file
-# Inputs: HDD and CDD data (IEA), WB WDI and Governance Data
+# Inputs: HDD and CDD data (IEA), Temperature data (WB), WB WDI and Governance Data
 # Outputs: controls.csv 
 #=========================================================
-
-filepath <- file.choose()
-dfstech <- read_rds(filepath)
 
 # Load in 16 degree baseline HDD and 18 degree CDD
 hdd <- read_csv("00_raw_data/controls/IEA_CMCC_HDD16monthlyworldbypopallmonths.csv", skip = 9) 
@@ -34,6 +32,38 @@ annual_temp <- temp_data %>%
     annual_CDD = sum(CDD18, na.rm = TRUE),
     .groups = "drop"
   )
+
+
+# Temperature variation data 
+tempvar <- read_excel("/Users/aidanmaddock/Desktop/Dissertation/SeqEmissionsReductions/00_raw_data/controls/CRU0.5_tempdata.xlsx")
+
+# Get rid of monthly variable in tempvar
+names(tempvar)[names(tempvar) %in% year_column_temp] <- 
+  substr(year_column_temp, 1, nchar(year_column_temp) - 3)
+
+year_column_temp <- grep("^(19|20)", names(tempvar), value = TRUE)
+  
+temp_long <- tempvar %>%
+  pivot_longer(
+    cols = all_of(year_column_temp),
+    names_to = "year",
+    values_to = "meantemp"
+  ) %>%
+  rename(ISO = code) %>%
+  mutate(year = as.numeric(year)) %>%
+  filter(year >= 1990, year <= 2024)
+
+# Calculate long-run average and variation from it
+temp_long <- temp_long %>%
+  group_by(ISO) %>%
+  mutate(
+    longrun_avg = mean(meantemp) # Long run temperature average from 1990 to 2024
+  ) %>%
+  ungroup() %>%
+  mutate(
+    tempvariation = meantemp - longrun_avg
+  ) %>%
+  select(c(ISO,year,tempvariation))
 
 
 # WB Data -----------------------------------------------------------------
@@ -168,14 +198,24 @@ temp <- filter_countries_and_years(
   max_year = 2022
 )
 
+temp_var <- filter_countries_and_years(
+  data = temp_long,
+  iso_col = "ISO",
+  year_col = "year",
+  min_year = 1996,
+  max_year = 2022
+)
+
+
+# Joining -----------------------------------------------------------------
+
 # Join all three into one control dataset
 controls <- wb_econ_hp %>%
   left_join(wb_gov, by = c("ISO", "year")) %>%
-  left_join(temp, by = c("ISO", "year"))
+  left_join(temp, by = c("ISO", "year")) %>%
+  left_join(temp_var, by = c("ISO","year"))
 
 write_csv(controls, "01_tidy_data/controls.csv")
-
-
 
 # Old code
 wbgdp <- wb_econ %>% 
@@ -185,6 +225,19 @@ wbgdp <- wb_econ %>%
 
 ytrend <- hp2(wbgdp, 6.25)
 ycycle <- wbgdp - ytrend
+
+
+
+ggplot(temp_var, aes(x = year, y = tempvariation, colour = ISO, group = ISO)) +
+  geom_line() +
+  labs(
+    x = "Year",
+    y = "Temperature variation from 1990–2024 average",
+    colour = "ISO"
+  ) +
+  theme_minimal()
+
+
 
 # Plot GDP cyclicality as a proof of concept 
 plot(wbgdp$GDPpc2015, type="l", col="black", lty=1)
