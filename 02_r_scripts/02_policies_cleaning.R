@@ -233,21 +233,6 @@ stringency_per_year <- oecd_grouped %>%
   summarise(Value = mean(Value, na.rm = TRUE))
 
 
-# Line graph stringency
-ggplot(stringency_per_year,
-       aes(x = year, y = Value)) +
-  geom_line() +
-  scale_y_continuous(limits = c(0, 10)) +
-  labs(
-    title = "Stringency Evolution",
-    x = "Year",
-    y = "Average Stringency"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
 # Save outputs for regression
 write.csv(oecd_grouped, "01_tidy_data/policies.csv")
 
@@ -255,7 +240,6 @@ write.csv(oecd_grouped, "01_tidy_data/policies.csv")
 
 
 # Graphing ----------------------------------------------------------------
-
 
 intro_plot_data <- oecd_grouped %>%
   filter(introduction == 1) %>%
@@ -323,3 +307,20 @@ ggplot(policy_long,
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
+
+
+# Line graph stringency
+ggplot(stringency_per_year,
+       aes(x = year, y = Value)) +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 10)) +
+  labs(
+    title = "Stringency Evolution",
+    x = "Year",
+    y = "Average Stringency"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+

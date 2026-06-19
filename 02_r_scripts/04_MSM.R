@@ -22,6 +22,11 @@ oecd_data <- read_csv("01_tidy_data/policies.csv")
 emissions <- read.csv("01_tidy_data/emissions_sector.csv")
 control_data <- read.csv("01_tidy_data/controls.csv")
 
+# Inclusion Details for price and regulatory instruments 
+price_categories <- c("Taxation", "Driving taxation")
+reg_categories <- c("Green Subsidy", "Renewable Subsidy", "Renewable Portfolio Standard")
+
+
 oecd_data <- oecd_data %>%
   filter(!year %in% c(1990,1991,1992,1993,1994, 1995, 2023)) 
 
@@ -30,12 +35,13 @@ panel <- oecd_data %>%
   arrange(ISO, Module, year) %>%
   group_by(ISO, Module) %>%
   mutate(
+    is_price = `Broad Category` %in% price_categories,
     id = interaction(ISO, Module, drop = TRUE),
     t  = row_number() - 1,
     
     # yearly introduction events
-    priceintro = as.integer(Policytype == "MBI"  & introduction == 1),
-    regintro   = as.integer(Policytype == "NMBI" & introduction == 1),
+    priceintro = as.integer(is_price  & introduction == 1),
+    regintro   = as.integer(!is_price & introduction == 1),
     
     # cumulative in-force states
     price = cummax(priceintro),
@@ -89,8 +95,8 @@ panel_sectors <- panel %>%
   group_by(ISO, Module, year) %>%
   summarise(
     
-    numprice = sum(price == 1 & Policytype == "MBI", na.rm = TRUE),
-    numreg   = sum(reg   == 1 & Policytype == "NMBI", na.rm = TRUE),
+    numprice = sum(price == 1 & is_price, na.rm = TRUE),
+    numreg   = sum(reg   == 1 & !is_price, na.rm = TRUE),
     
     price = as.integer(any(price == 1, na.rm = TRUE)),
     reg   = as.integer(any(reg   == 1, na.rm = TRUE)),
@@ -98,12 +104,12 @@ panel_sectors <- panel %>%
     state = first(state),
     pathgroup = first(path_group),
     
-    price_stringency = if (any(Policytype == "MBI")) {
-      sum(Value[Policytype == "MBI"], na.rm = TRUE)
+    price_stringency = if (any(is_price)) {
+      sum(Value[is_price], na.rm = TRUE)
     } else NA_real_,
     
-    reg_stringency = if (any(Policytype == "NMBI")) {
-      sum(Value[Policytype == "NMBI"], na.rm = TRUE)
+    reg_stringency = if (any(!is_price)) {
+      sum(Value[!is_price], na.rm = TRUE)
     } else NA_real_,
     
     .groups = "drop"
@@ -128,8 +134,8 @@ panel_sectors <- panel %>%
 panel_data <- panel_sectors %>%
   left_join(emissions,by = c("ISO", "year", "Module")) %>% # Join emissions data in
   left_join(control_data, by = c("ISO", "year")) %>%
-  filter(Module == "Industry") %>%
-  filter(!ISO %in% c("EU27_2020"))
+  filter(!ISO %in% c("EU27_2020")) %>%
+  filter(Module == "Electricity") 
 
 # Weighting ---------------------------------------------------------------
 
@@ -146,7 +152,7 @@ ps_model <- multinom(
   pathgroup ~ pop + GDPpc2015 +
     annual_HDD + annual_CDD +
     GDPpc2015_cycle + ruleoflaw +
-    importpcGDP + tempvariation + Emissions_co2,
+    importpcGDP + tempvariation + lnEmissions_co2,
   data = baseline
 )
 
@@ -174,7 +180,7 @@ bal.tab(
   pathgroup ~ pop + GDPpc2015 +
     annual_HDD + annual_CDD +
     GDPpc2015_cycle + ruleoflaw +
-    importpcGDP + tempvariation + Emissions_co2,
+    importpcGDP + tempvariation + lnEmissions_co2,
   data = baseline,
   weights = baseline$ipw_stab,
   method = "weighting"
@@ -222,12 +228,8 @@ plot_panel <- panel_data %>%
   mutate(first_adopt = min(if_else(state != "none", year, NA_integer_), na.rm = TRUE)) %>%
   ungroup() %>%
   mutate(
-    first_adopt = if_else(is.infinite(first_adopt), NA_real_, first_adopt)
-  ) %>%
-  arrange(Classification, Module, first_adopt, ISO) %>%
-  mutate(
-    ISO = factor(ISO, levels = unique(ISO)),
-    state = factor(state, levels = c("none", "reg only", "price only", "both"))
+    first_adopt = if_else(is.infinite(first_adopt), NA_real_, first_adopt),
+    state = factor(state, levels = c("none", "reg", "price", "both"))
   )
 
 
@@ -237,8 +239,8 @@ ggplot(plot_panel, aes(x = year, y = ISO, fill = state)) +
   scale_fill_manual(
     values = c(
       "none" = "white",
-      "reg only" = "steelblue3",
-      "price only" = "darkorange2",
+      "reg" = "steelblue3",
+      "price" = "darkorange2",
       "both" = "darkgreen"
     )
   ) +
