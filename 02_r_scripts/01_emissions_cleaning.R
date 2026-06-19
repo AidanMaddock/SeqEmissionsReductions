@@ -98,18 +98,27 @@ country_groups <- read_csv("01_tidy_data/CountryGroupings.csv")
 # Combine emissions together
 emissions_combined <-co2_sector_long
 emissions_combined <- emissions_combined %>%
-  left_join(co2e_sector_long, by = c("Name", "Sector", "year")) %>%
+  left_join(co2e_sector_long, by = c("Name", "Sector", "year"))
+
+# Rename some countries for parity with CountryGroupings
+emissions_combined <- emissions_combined %>%
+  mutate(Name = if_else(Name == "Czech Republic", "Czechia", Name),
+         Name = if_else(Name == "Russian Federation", "Russia", Name),
+         Name = if_else(Name == "Korea, Republic of", "Korea", Name),
+         Name = if_else(Name == "Slovakia", "Slovak Republic", Name)
+  )
+
+emissions_combined <- emissions_combined %>%
   left_join(country_groups, by = "Name") %>%
   filter(!is.na(ISO)) %>% # Only keep countries in our sample
-  
   mutate( 
-    year = substr(year, 3, nchar(year))
+    year = substr(year, 3, nchar(year)),
+    lnEmissions_co2 = log(Emissions_co2),  # Make log emissions variable
+    lnEmissions_co2e = log(Emissions_co2)
   ) %>%
-  
   rename(Module = Sector)
 
 
-  
 
 # Save outputs 
 write.csv(emissions_combined, "01_tidy_data/emissions_sector.csv")

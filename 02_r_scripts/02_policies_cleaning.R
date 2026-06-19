@@ -224,6 +224,39 @@ oecd_grouped <- oecd_data %>%
   ) %>%
   ungroup()
 
+
+# 3. Stringency Increases -------------------------------------------------
+
+stringency_per_year <- oecd_grouped %>%
+  filter(Value > 0, .preserve = FALSE) %>%
+  group_by(year) %>%
+  summarise(Value = mean(Value, na.rm = TRUE))
+
+
+# Line graph stringency
+ggplot(stringency_per_year,
+       aes(x = year, y = Value)) +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 10)) +
+  labs(
+    title = "Stringency Evolution",
+    x = "Year",
+    y = "Average Stringency"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+# Save outputs for regression
+write.csv(oecd_grouped, "01_tidy_data/policies.csv")
+
+
+
+
+# Graphing ----------------------------------------------------------------
+
+
 intro_plot_data <- oecd_grouped %>%
   filter(introduction == 1) %>%
   mutate(
@@ -260,7 +293,7 @@ policy_long <- policy_per_year %>%
     names_to = "policy_type",
     values_to = "count"
   )
-  
+
 # Bar graph
 ggplot(introductions_per_year,
        aes(x = factor(year), y = introductions)) +
@@ -290,31 +323,3 @@ ggplot(policy_long,
   theme(
     axis.text.x = element_text(angle = 45, hjust = 1)
   )
-
-# 2. Stringency Increases -------------------------------------------------
-
-  
-
-stringency_per_year <- oecd_grouped %>%
-  filter(Value > 0, .preserve = FALSE) %>%
-  group_by(year) %>%
-  summarise(Value = mean(Value, na.rm = TRUE))
-
-
-# Line graph stringency
-ggplot(stringency_per_year,
-       aes(x = year, y = Value)) +
-  geom_line() +
-  scale_y_continuous(limits = c(0, 10)) +
-  labs(
-    title = "Stringency Evolution",
-    x = "Year",
-    y = "Average Stringency"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
-# Save outputs for regression
-write.csv(oecd_grouped, "01_tidy_data/policies.csv")
