@@ -213,9 +213,10 @@ oecd_grouped <- oecd_data %>%
     
     jump = Value - prev_value,
     
+    # Estimate intensification as new policy if jump in stringency is greater than 2
     intensification = as.integer(
       !is.na(jump) &
-        jump > 0 &
+        jump > 2 &
         prev_value > 0 &
         introduction == 0
     ),
@@ -265,7 +266,7 @@ ggplot(intro_plot_data, aes(x = year, y = ISO, fill = Policytype_detail_new)) +
 
 
 policy_per_year <- oecd_grouped %>%
-  group_by(year) %>%
+  group_by(year,Module) %>%
   summarise(
     introductions = sum(introduction, na.rm = TRUE),
     intensifications = sum(intensification, na.rm = TRUE)
@@ -278,25 +279,13 @@ policy_long <- policy_per_year %>%
     values_to = "count"
   )
 
-# Bar graph
-ggplot(introductions_per_year,
-       aes(x = factor(year), y = introductions)) +
-  geom_col() +
-  labs(
-    title = "Policy Introductions per Year",
-    x = "Year",
-    y = "Number of Introductions"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
 
 ggplot(policy_long,
        aes(x = factor(year),
            y = count,
            fill = policy_type)) +
   geom_col() +
+  facet_wrap(~ Module, ncol = 2) +
   labs(
     title = "Policy Changes per Year",
     x = "Year",

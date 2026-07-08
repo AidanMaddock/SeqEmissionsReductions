@@ -119,6 +119,28 @@ emissions_combined <- emissions_combined %>%
   rename(Module = Sector)
 
 
+# One of total emissions per country
+emissions_countrylevel_combined <- 
+  left_join(country_groups, by = "Name") %>%
+  filter(!is.na(ISO)) %>% # Only keep countries in our sample
+
 
 # Save outputs 
 write.csv(emissions_combined, "01_tidy_data/emissions_sector.csv")
+
+
+
+# Plotting ----------------------------------------------------------------
+
+ggplot(emissions_combined, aes(x = year, y = lnEmissions_co2, colour = ISO, group = ISO)) +
+  geom_line() +
+  facet_wrap(~ Module, ncol = 2) +
+  labs(
+    x = "Year",
+    y = "Country",
+    colour = "Country",
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 8)
+  )
