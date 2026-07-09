@@ -25,7 +25,8 @@ control_data <- read.csv("01_tidy_data/controls.csv")
 # Inclusion Details for price and regulatory instruments 
 price_categories <- c("Taxation", "Driving taxation")
 subsidy_categories <- c("Green subsidy", "Renewable subsidy", "Financing mechanism")
-standards_categories <- c("Air pollution standard", "Energy efficiency mandate", "Building code", "Minimum energy performance standard", "Renewable portfolio standard")
+standards_categories <- c("Air pollution standard", "Energy efficiency mandate", "Building code", "Minimum energy performance standard", "Renewable portfolio standard", "Label")
+reg_categories <- c("Ban", "Speed Limit", "Planning")
 
 # Filter out first few years and latest ones 
 oecd_data <- oecd_data %>%
@@ -37,14 +38,19 @@ panel <- oecd_data %>%
   group_by(ISO, Module) %>%
   mutate(
     # Variables to assign policy introductions to categories
-    is_price = `Broad Category` %in% price_categories,
-    is_subsidy = `Broad Category` %in% subsidy_categories,
-    is_standard = `Broad Category` %in% standards_categories,
-    is_reg = !is_price,
+    #is_price = `Broad Category` %in% price_categories,
+    #is_subsidy = `Broad Category` %in% subsidy_categories,
+    #is_standard = `Broad Category` %in% standards_categories,
+    #is_reg = `Broad Category` %in% reg_categories, 
+    
+    is_price = as.integer(Cluster_categories == "Pricing"),
+    is_subsidy = as.integer(Cluster_categories == "Subsidy"),
+    is_standard = as.integer(Cluster_categories == "Information"),
+    is_reg = as.integer(Cluster_categories == "Regulation"),
     
     # yearly introduction events based on introduction or intensification
     priceintro = as.integer(is_price  & introduction == 1 | is_price  & intensification == 1),
-    regintro   = as.integer(!is_price & introduction == 1 | !is_price  & intensification == 1),
+    regintro = as.integer(is_reg & (introduction == 1 | intensification == 1)),
     subsidyintro   = as.integer(is_subsidy & introduction == 1 | is_subsidy  & intensification == 1),
     standardintro   = as.integer(is_standard & introduction == 1 | is_standard  & intensification == 1),
     
@@ -56,9 +62,9 @@ panel <- oecd_data %>%
     
     # time-varying regime state
     state = case_when(
-      price == 0 & reg == 0 ~ "none",
-      price == 1 & reg == 0 ~ "price",
-      price == 0 & reg == 1 ~ "reg",
+      price == 0 & reg == 0 & subsidy == 0 & standard == 0 ~ "none",
+      price == 1 & reg == 0 & subsidy == 0 & standard == 0 ~ "price",
+      price == 0 & reg == 1 & subsidy == 0 & standard == 0  ~ "reg",
       price == 1 & reg == 1 ~ "both"
     ),
     state = factor(state, levels = c("none", "price", "reg", "both")),
@@ -81,7 +87,7 @@ panel <- oecd_data %>%
     path = case_when(
       path_group == "price_first"   & year < first_reg_year   ~ "none",
       path_group == "reg_first"     & year < first_price_year ~ "none",
-      path_group == "simultaneous"  & year < first_price_year ~ "none",
+      path_group == "simultaneous"  & year == first_price_year ~ "none",
       path_group == "price_only"    & price == 0             ~ "none",
       path_group == "reg_only"      & reg == 0               ~ "none",
       TRUE ~ path_group
@@ -89,6 +95,8 @@ panel <- oecd_data %>%
     path = factor(path, levels = c("none", "price_first", "reg_first", "simultaneous", "price_only", "reg_only"))
   ) %>%
   ungroup() 
+
+write_csv(panel,"01_tidy_data/policypanel_long.csv")
 
 # Collapse down into sectors (Module)
 panel_sectors <- panel %>%
@@ -306,7 +314,7 @@ summary(panel_msm_weighted$sw)
 
 
 msm_model <- feols(
-  lnEmissions_co2e ~ lag_price + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+  lnEmissions_co2e ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
   data    = panel_msm_weighted, 
   weights = ~sw,
@@ -316,7 +324,7 @@ summary(msm_model)
 
 
 msm_reg_model <- feols(
-  lnEmissions_co2 ~ lag_price + reg_timing + lag_price:reg_timing + lag_price_string + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+  lnEmissions_co2 ~ + lag_price_string + reg_timing + lag_price_string:reg_timing + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
   data    = panel_msm_weighted, 
   weights = ~sw,
@@ -324,12 +332,12 @@ msm_reg_model <- feols(
 )
 summary(msm_reg_model)
 
-# Marginal effects
-pct_effects <- 100 * (exp(coef(model)[grep("^pathgroup", names(coef(model)))]) - 1)
+# 
+pct_effects <- 100 * (exp(coef(msm_reg_model)[grep("^pathgroup", names(coef(msm_reg_model)))]) - 1)
 pct_effects
 
 
-# Predicted effects
+# Predicted effects (policy counterfactual)
 
 
 
