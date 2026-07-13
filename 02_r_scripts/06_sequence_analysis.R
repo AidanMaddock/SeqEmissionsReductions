@@ -1,8 +1,3 @@
-# =========================
-# Sequence analysis template
-# =========================
-
-# Packages
 library(dplyr)
 library(tidyr)
 library(TraMineR)
@@ -11,22 +6,28 @@ library(tidygraph)
 library(ggraph)
 library(cowplot)
 
+#=========================================================
+# Project: Climate Policy Sequencing
+# File: 06_sequence_analysis.r
+# Description: This script categorises policy 
+# Inputs: policypanel_long.csv
+# Outputs: No csvs. Lots of plots
+#=========================================================
+
+
 # -------------------------
-# 1) Choose your state space
+# 1) Construct state spaces within sequence
 # -------------------------
-# Simple 4-state version based on your current state variable:
-# none / price / reg / both
 
 df <- read_csv("01_tidy_data/policypanel_long.csv")
 
+# Use simple state designated in 04_msm.R (none, price, reg, both)
 panel_seq <- df %>%
   mutate(
     state4 = as.character(state)
   )
 
-# Optional: if you want a richer state space using all 4 policy types,
-# build a more detailed composite state instead.
-# Comment this block out if you only want the 4-state version.
+# Optional: Richer state that builds a more detailed composite state
 panel_seq <- panel_seq %>%
   mutate(
     state8 = case_when(
@@ -51,8 +52,9 @@ panel_seq <- panel_seq %>%
   )
 
 # ------------------------------------------------
-# 2) Helper: convert long panel -> wide sequences
+# 2) Helper functions to convert long policy panel -> wide sequences
 # ------------------------------------------------
+# Helper that summarises long policy panel into country-module-year-state panel
 prep_seq_df <- function(dat, state_col = "state4") {
   year_grid <- seq(min(dat$year, na.rm = TRUE), max(dat$year, na.rm = TRUE), by = 1)
   
@@ -66,6 +68,7 @@ prep_seq_df <- function(dat, state_col = "state4") {
     arrange(ISO, Module, year)
 }
 
+# Helper that pivots prep_seq_df's output to a wide format (years as columns) for TramineR to analyse
 make_seqobj <- function(dat_long) {
   wide <- dat_long %>%
     mutate(year = paste0("y", year)) %>%
@@ -90,7 +93,7 @@ make_seqobj <- function(dat_long) {
 }
 
 # ------------------------------------------------
-# 3) Run sequence analysis for each sector/module
+# 3) Run sequence analysis for each sector (referred to as module in the data)
 # ------------------------------------------------
 modules <- sort(unique(panel_seq$Module))
 
@@ -109,7 +112,7 @@ for (m in modules) {
   #dat_m_seq <- prep_seq_df(dat_m, state_col = "state4")
    dat_m_seq <- prep_seq_df(dat_m, state_col = "state8")
   
-  seq_m <- make_seqobj(dat_m_seq)
+  seq_m <- make_seqobj(dat_m_seq) # make data into a sequence object
   
   # Descriptive plots
   pdf(paste0("sequence_plots_", m, ".pdf"), width = 12, height = 8)
@@ -217,8 +220,6 @@ write.csv(cluster_membership, "sequence_clusters_all_modules.csv", row.names = F
 
 
 # 5. Graph Plotting -------------------------------------------------------
-
-
 plot_transition_network <- function(panel, module_name, state_var = "state8") {
   library(dplyr)
   library(tibble)

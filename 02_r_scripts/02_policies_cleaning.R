@@ -4,11 +4,11 @@ library(readr)
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 01_policies_cleaning.R
-# Description: This file cleans the climate policy dataset
+# Description: This file cleans the climate policy dataset by
+# mapping policies to names and coding binary introduction variables
 # Inputs: OECD_CAMPF_Aggregated.csv
-# Outputs: 
+# Outputs: policies.csv
 #=========================================================
-
 
 
 # Variable Mapping --------------------------------------------------------
@@ -100,6 +100,7 @@ policy_map <- tibble(
 # Join in USA data (from IPAC)
 policy_data_usa = read_csv("00_raw_data/policies/IPAC_policy_usa.csv")
 
+# Recode policy similairly (some labels different but now matched with oecd)
 policy_data_usa <- policy_data_usa %>%
   mutate(
     `Policy Name (OECD)` = recode(
@@ -148,7 +149,7 @@ policy_data_usa <- policy_data_usa %>%
 # Load in OECD names from Stechemesser to map towards sectors and market/nonmarket instruments
 policynames <- read_csv("00_raw_data/policies/policy_names_OECD.csv")
 
-# First clean of OECD data to add in US data 
+# First clean of OECD data, renaming columns so it can be joined with USA data
 oecd_data <- oecd_data %>%
   left_join(policy_map, by = "Climate actions and policies") %>%
   rename(
@@ -165,6 +166,7 @@ oecd_data <- oecd_data %>%
   ) %>%
   filter(ISO != "USA") #USA data supressed in public version of database
 
+# Select only relevant columns of the US data
 policy_data_usa <- policy_data_usa %>%
   rename(Value = valueCAP_Comp) %>%
   select(
@@ -174,26 +176,21 @@ policy_data_usa <- policy_data_usa %>%
     `Policy Name (OECD)`
   )
 
+# Combine the two
 combined_data <- bind_rows(oecd_data, policy_data_usa)
 oecd_data <- combined_data
 
+# A bit of hijinks to remove duplicate and non-necessary columns
 oecd_data <- oecd_data %>%
   left_join(policynames, by = "Policy Name (OECD)") %>%
   filter(!is.na(`Policy Name (OECD)`)) %>%
-  mutate(Policy = `Policy Name (OECD)`) 
-
-
-# Remove non-necessary columns
-oecd_data <- oecd_data %>%
+  mutate(Policy = `Policy Name (OECD)`) %>%
   select(-`Policy Name (OECD)`) %>%
   select(- `Note`)
-
 
 # Reorder for viewing 
 oecd_data <- oecd_data %>%
   select(ISO, year, Value, Module, Policy, 'Broad Category', Market_non_market, everything())
-
-
 
 # 2. Policy Introductions ----------------------------------------------------
 
@@ -225,9 +222,7 @@ oecd_grouped <- oecd_data %>%
   ) %>%
   ungroup()
 
-
 # 3. Stringency Increases -------------------------------------------------
-
 stringency_per_year <- oecd_grouped %>%
   filter(Value > 0, .preserve = FALSE) %>%
   group_by(year) %>%
@@ -237,11 +232,7 @@ stringency_per_year <- oecd_grouped %>%
 # Save outputs for regression
 write.csv(oecd_grouped, "01_tidy_data/policies.csv")
 
-
-
-
 # Graphing ----------------------------------------------------------------
-
 intro_plot_data <- oecd_grouped %>%
   filter(introduction == 1) %>%
   mutate(

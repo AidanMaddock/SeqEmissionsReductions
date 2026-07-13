@@ -5,9 +5,8 @@ library(dplyr)
 # File: 00_project_functions.R
 # Description: This file contains functions called throughout the project
 # Inputs: CountryGroupings.csv
-# Outputs: 
+# Outputs: filter_countries_and_years
 #=========================================================
-
 
 # Function for filtering countries and years 
 filter_countries_and_years <- function(
@@ -38,7 +37,7 @@ filter_countries_and_years <- function(
       filter(.data[[year_col]] <= max_year)
   }
   
-  # Optional classification filter
+  # Optional classification filter (e.g. EU)
   if (!is.null(classification)) {
     out <- out %>%
       filter(Classification %in% classification)

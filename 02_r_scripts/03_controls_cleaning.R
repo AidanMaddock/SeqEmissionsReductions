@@ -34,7 +34,7 @@ annual_temp <- temp_data %>%
   )
 
 
-# Temperature variation data 
+# Temperature variation data
 tempvar <- read_excel("/Users/aidanmaddock/Desktop/Dissertation/SeqEmissionsReductions/00_raw_data/controls/CRU0.5_tempdata.xlsx")
 
 # Get rid of monthly variable in tempvar
@@ -66,10 +66,7 @@ temp_long <- temp_long %>%
   select(c(ISO,year,tempvariation))
 
 
-# WB Data -----------------------------------------------------------------
-
-#Data for economic control variables 
-
+# WB Data (economic control variables) -----------------------------------------------------------------
 wbdata <- read_csv("/Users/aidanmaddock/Desktop/Dissertation/SeqEmissionsReductions/00_raw_data/controls/WB_WDIData.csv")
 wbdata <- wbdata[1:(nrow(wbdata) - 5), ] # Footer data is being erroneously loaded in
 
@@ -94,7 +91,7 @@ wb_out <- wbdata %>%
   ) 
 
 wb_out <- wb_out %>%
-  rename(
+  rename( # Rename for clarity
     pop = SP.POP.TOTL,
     importpcGDP = NE.IMP.GNFS.ZS,
     AVservicepcGDP = NV.SRV.TOTL.ZS,
@@ -105,16 +102,17 @@ wb_out <- wb_out %>%
     urbpop = SP.URB.TOTL
   )
 
-
 # Do similarily with WBgov data (rule of law)
 wbgov <- read_csv("/Users/aidanmaddock/Desktop/Dissertation/SeqEmissionsReductions/00_raw_data/controls/WB_govData.csv")
 wbgov <- wbgov[1:(nrow(wbgov) - 5), ] # Footer data is being erroneously loaded in
 
-year_cols_gov <- grep("^(19|20)", names(wbgov), value = TRUE) # Make seperate list of year columns for pivoting
+# WBgov data has weird year columns so create a list of them for pivoting
+year_cols_gov <- grep("^(19|20)", names(wbgov), value = TRUE)
+
 # Convert long year-country data repeated across sectors to a long year-country with sector data
 wbgov_out <- wbgov %>%
   pivot_longer(
-    cols = all_of(year_cols_gov),
+    cols = all_of(year_cols_gov), # from grep 
     names_to = "year",
     values_to = "value"
   ) %>%
@@ -129,8 +127,8 @@ wbgov_out <- wbgov %>%
     values_from = value
   ) 
 
-
-# No data for 1997, 1999, and 2001. Create columns that have the average value of the year before and after for these years (linear interpolation)
+# No data for 1997, 1999, and 2001.
+# Create columns that have the average value of the year before and after for these years (linear interpolation)
 wbgov_interpolated <- wbgov_out %>%
   group_by(`Country Code`) %>%
   complete(year = 1996:2024) %>%
@@ -138,7 +136,7 @@ wbgov_interpolated <- wbgov_out %>%
   mutate(
     across(
       -year,
-      ~ zoo::na.approx(.x, x = year, na.rm = FALSE)
+      ~ zoo::na.approx(.x, x = year, na.rm = FALSE) 
     )
   ) %>%
   ungroup()
@@ -151,13 +149,12 @@ wbgov_interpolated <- wbgov_interpolated %>%
     ruleoflaw = GOV_WGI_RL.SC
   )
 
-
 # Filter to study datasets
 wb_econ <- filter_countries_and_years(
   data = wb_out,
   iso_col = "Country Code",
   year_col = "year",
-  min_year = 1994, # Note that initially this is filtered to earlier to calculate the HP filter as it needs a trend
+  min_year = 1994, # Note that this is filtered further back to enable the HP filter trend to be calculated
   max_year = 2024
 )
 
@@ -180,8 +177,9 @@ wb_econ_hp <- wb_econ %>%
       )
   }) %>%
   ungroup() %>%
-  filter(!year %in% c(1994, 1995, 2023, 2024))
+  filter(!year %in% c(1994, 1995, 2023, 2024)) # Filter out completely 
 
+# Filter datasets to panel countries and years 
 wb_gov <- filter_countries_and_years(
   data = wbgov_interpolated,
   iso_col = "Country Code",
@@ -216,28 +214,6 @@ controls <- wb_econ_hp %>%
   left_join(temp_var, by = c("ISO","year"))
 
 write_csv(controls, "01_tidy_data/controls.csv")
-
-# Old code
-wbgdp <- wb_econ %>% 
-  select(c(ISO,year,GDPpc2015)) %>% 
-  filter(ISO == "ARG") %>% 
-  select(-ISO, -year)
-
-ytrend <- hp2(wbgdp, 6.25)
-ycycle <- wbgdp - ytrend
-
-
-
-ggplot(temp_var, aes(x = year, y = tempvariation, colour = ISO, group = ISO)) +
-  geom_line() +
-  labs(
-    x = "Year",
-    y = "Temperature variation from 1990–2024 average",
-    colour = "ISO"
-  ) +
-  theme_minimal()
-
-
 
 # Plot GDP cyclicality as a proof of concept 
 plot(wbgdp$GDPpc2015, type="l", col="black", lty=1)

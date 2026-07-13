@@ -12,15 +12,17 @@ library(WeightIt)
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 04_MSM.r
-# Description: 
-# Inputs: 
-# Outputs: 
+# Description: The first part of the script uses the policies dataset from 02_policies_cleaning.r
+# to build both a policy- and sector-level panel. The second uses these panels to run and present
+# a marginal structural model of policy sequencing and emissions reductions.
+# Inputs: policies.csv, emissions_sector.csv, controls.csv
+# Outputs: joined_data.csv
 #=========================================================
 
-# Combine independent, dependent, and control variables -------------------
+# 1. Policy panel building
+
+# Load in policy data
 oecd_data <- read_csv("01_tidy_data/policies.csv")
-emissions <- read.csv("01_tidy_data/emissions_sector.csv")
-control_data <- read.csv("01_tidy_data/controls.csv")
 
 # Inclusion Details for price and regulatory instruments 
 price_categories <- c("Taxation", "Driving taxation")
@@ -38,10 +40,6 @@ panel <- oecd_data %>%
   group_by(ISO, Module) %>%
   mutate(
     # Variables to assign policy introductions to categories
-    #is_price = `Broad Category` %in% price_categories,
-    #is_subsidy = `Broad Category` %in% subsidy_categories,
-    #is_standard = `Broad Category` %in% standards_categories,
-    #is_reg = `Broad Category` %in% reg_categories, 
     
     is_price = as.integer(Cluster_categories == "Pricing"),
     is_subsidy = as.integer(Cluster_categories == "Subsidy"),
@@ -148,18 +146,20 @@ panel_sectors <- panel %>%
   ) %>%
   ungroup()
 
+# Combine with dependent and control variables for final model
+emissions <- read.csv("01_tidy_data/emissions_sector.csv")
+control_data <- read.csv("01_tidy_data/controls.csv")
 
-# Join all three together for final model
 panel_data <- panel_sectors %>%
   left_join(emissions,by = c("ISO", "year", "Module")) %>% # Join emissions data in
   left_join(control_data, by = c("ISO", "year")) %>%
   filter(!ISO %in% c("EU27_2020")) 
 
+write_csv(panel,"00_raw_data/joined_data.csv") # Used in 05_matrix.R 
 
-write_csv(panel,"00_raw_data/joined_data.csv")
 
+# Weighting (time-varying) -------------------------------------------------------------------------
 
-# Weighting (time-varying)
 
 lag_vars <- c(
   "GDPpc2015", "annual_HDD", "annual_CDD", "ruleoflaw",
