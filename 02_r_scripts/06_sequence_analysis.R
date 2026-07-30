@@ -5,6 +5,7 @@ library(cluster)
 library(tidygraph)
 library(ggraph)
 library(cowplot)
+library(readr)
 
 #=========================================================
 # Project: Climate Policy Sequencing
@@ -220,7 +221,26 @@ write.csv(cluster_membership, "sequence_clusters_all_modules.csv", row.names = F
 
 
 # 5. Graph Plotting -------------------------------------------------------
-plot_transition_network <- function(panel, module_name, state_var = "state8") {
+developed <- c(
+  "AUS", "AUT", "BEL", "CAN", "CHE", "CZE", "DEU", "DNK",
+  "ESP", "EST", "EU27_2020", "FIN", "FRA", "GBR", "GRC",
+  "HRV", "HUN", "IRL", "ISL", "ISR", "ITA", "JPN", "KOR",
+  "LTU", "LUX", "LVA", "MLT", "NLD", "NOR", "NZL", "POL",
+  "PRT", "SVK", "SVN", "SWE", "USA"
+)
+
+developing <- c(
+  "ARG", "BGR", "BRA", "CHL", "CHN", "COL", "CRI", "IDN",
+  "IND", "MEX", "PER", "ROU", "RUS", "SAU", "TUR", "ZAF"
+)
+
+panel_seq$dev_group <- dplyr::case_when(
+  panel_seq$ISO %in% developed  ~ "Developed",
+  panel_seq$ISO %in% developing ~ "Developing",
+  TRUE ~ NA_character_
+)
+
+plot_transition_network <- function(panel, module_name, state_var = "state8", show_group_labels = FALSE) {
   library(dplyr)
   library(tibble)
   library(tidygraph)
@@ -229,7 +249,8 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
   library(grid)
   
   panel_module <- panel %>%
-    filter(Module == module_name)
+    filter(Module == module_name) %>%
+    filter(dev_group == "Developing")
   
   state_levels <- c(
     "none",
@@ -305,9 +326,9 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
       
       5,5,5,5,        # three policies
       
-      6.5,              # all four
+      5.5,              # all four
       
-      8              # end
+      7              # end
     ),
     
     y = c(
@@ -356,12 +377,18 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
   
   p <- ggraph(graph, layout = "manual", x = x, y = y) +
     geom_edge_link(
-      aes(width = prob, linetype = type),
-      colour = "grey55",
-      alpha = 0.7,
+      aes(width = prob, linetype = type, colour = type),
+      alpha = 0.5,
       lineend = "round",
-      arrow = arrow(length = unit(2.8, "mm"), type = "closed"),
+      arrow = arrow(length = unit(2, "mm"), type = "open"),
       end_cap = circle(3, "mm")
+    ) +
+    scale_edge_colour_manual(
+      values = c(
+        "transition" = "grey55",
+        "end" = "grey80"
+      ),
+      guide = "none"
     ) +
     geom_node_point(
       aes(
@@ -378,12 +405,18 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
       guide = "none"
     ) +
     geom_node_text(
-      aes(label = label, alpha = observed),
+      aes(label = ifelse(observed, label, NA_character_)),
       size = 3.2,
       fontface = "bold",
-      vjust = -2
+      vjust = -2,
+      na.rm = TRUE
+    )+
+    scale_size_area(
+      max_size = 10,
+      breaks = c(1000, 2000, 3500, 5000),
+      limits = c(0, 5000),
+      name = "Country-years"
     ) +
-    scale_size_area(max_size = 10, name = "Country-years") +
     scale_fill_manual(
       values = c(
         "Includes price" = "#2C7BB6",
@@ -393,9 +426,14 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
       ),
       name = "Node type"
     ) +
-    scale_edge_width(range = c(0.3, 2.5), name = "Transition probability") +
+    scale_edge_width(
+      range = c(0.3, 2.5),
+      limits = c(0, 1),
+      breaks = c(0.25, 0.50, 0.75, 1.00),
+      name = "Transition probability"
+    ) + 
     scale_edge_linetype_manual(
-      values = c("transition" = "solid", "end" = "dashed"),
+      values = c("transition" = "solid", "end" = "33"),
       labels = c("transition" = "Observed transition", "end" = "End-of-sample link"),
       name = "Edge type"
     ) +
@@ -417,19 +455,6 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
         override.aes = list(shape = 21, fill = "white", colour = "grey20", alpha = 1)
       )
     ) +
-    annotate(
-      "text",
-      x = c(1, 3, 5),
-      y = 4.5,
-      label = c(
-        "1 type",
-        "2 types",
-        "3 types"
-      ),
-      fontface = "bold",
-      size = 4,
-      colour = "grey20"
-    ) +
     theme_void(base_size = 12) +
     theme(
       plot.title = element_text(face = "bold"),
@@ -449,9 +474,34 @@ plot_transition_network <- function(panel, module_name, state_var = "state8") {
       legend.spacing.y = unit(2, "mm")
     )
   
+  if (show_group_labels) {
+    p <- p +
+      annotate(
+        "text",
+        x = c(1, 3, 5),
+        y = -4.5,
+        label = c("1 type", "2 types", "3 types"),
+        fontface = "bold",
+        size = 4,
+        colour = "grey20"
+      )
+  }
+  
   print(p)
 }
 
+library(patchwork)
+
+p_elec <- plot_transition_network(panel_seq, "Electricity", "state8", show_group_labels = TRUE)
+p_ind  <- plot_transition_network(panel_seq, "Industry", "state8")
+p_tran <- plot_transition_network(panel_seq, "Transport", "state8")
+p_bld  <- plot_transition_network(panel_seq, "Buildings", "state8")
+
+(p_elec | p_ind) /
+  (p_tran | p_bld) +
+  plot_annotation(tag_levels = "A") +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
 
 
 plot_transition_network(panel_seq, "Electricity", state_var = "state8")
@@ -470,7 +520,7 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
   library(grid)
   
   panel_module <- panel %>%
-    filter(Module == module_name)
+    filter(Module == module_name) 
   
   # Keep only countries that eventually adopt carbon pricing
   pre_df <- panel_module %>%
@@ -529,18 +579,18 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
   node_layout <- tibble(
     name = factor(state_levels, levels = state_levels),
     x = c(
-      0,   # none
-      2, 2, 2,   # single-policy states
-      4, 4, 4,   # two-policy states
-      6,         # three-policy state
-      8          # carbon pricing
+      0,
+      2.5, 2.5, 2.5,
+      5, 5, 5,
+      7.5,
+      9
     ),
     y = c(
       0,
-      2, 0, -2,
-      2, 0, -2,
+      2.5, 0, -2.5,
+      2.5, 0, -2.5,
       0,
-      0
+      -0.9
     )
   ) %>%
     left_join(node_data, by = "name") %>%
@@ -581,17 +631,27 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
       colour = "grey30",
       stroke = 0.8
     ) +
-    geom_node_text(
-      aes(label = label, alpha = observed),
+  geom_node_text(
+      aes(label = ifelse(observed, label, NA_character_)),
       size = 3.2,
       fontface = "bold",
-      vjust = -2
+      vjust = -2,
+      na.rm = TRUE
+    )+
+    coord_cartesian(clip = "off") +
+    theme(
+      plot.margin = margin(20, 20, 20, 20)
     ) +
     scale_alpha_manual(
       values = c(`TRUE` = 1, `FALSE` = 0.15),
       guide = "none"
+    ) + 
+    scale_size_area(
+      max_size = 10,
+      breaks = c(1000, 2000, 3500, 5000),
+      limits = c(0, 5000),
+      name = "Country-years"
     ) +
-    scale_size_area(max_size = 10, name = "Country-years") +
     scale_fill_manual(
       values = c(
         "Regulatory only" = "#D95F02",
@@ -602,7 +662,12 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
       ),
       name = "Node type"
     ) +
-    scale_edge_width(range = c(0.3, 2.5), name = "Transition probability") +
+    scale_edge_width(
+      range = c(0.3, 2.5),
+      limits = c(0, 1),
+      breaks = c(0.25, 0.50, 0.75, 1.00),
+      name = "Transition probability"
+    ) + 
     scale_edge_linetype_manual(
       values = c("transition" = "solid", "carbon_pricing" = "dashed"),
       labels = c("transition" = "Observed transition", "carbon_pricing" = "Carbon pricing"),
@@ -628,15 +693,6 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
         override.aes = list(shape = 21, fill = "white", colour = "grey20", alpha = 1)
       )
     ) +
-    annotate(
-      "text",
-      x = c(0, 2, 4, 6, 8),
-      y = -3.2,
-      label = c("No policy", "1 policy", "2 policies", "3 policies", "Carbon pricing"),
-      fontface = "bold",
-      size = 4,
-      colour = "grey30"
-    ) +
     theme_void(base_size = 12) +
     theme(
       plot.title = element_text(face = "bold"),
@@ -655,19 +711,138 @@ plot_pre_carbon_pricing_network <- function(panel, module_name, state_var = "sta
       legend.margin = margin(4, 4, 4, 4),
       legend.spacing.y = unit(2, "mm"),
       plot.margin = margin(8, 20, 20, 8)
-    ) +
-    labs(
-      title = "Policy transitions before carbon pricing",
-      subtitle = "Countries are followed only until the first year of carbon pricing"
-    )
+    ) 
   
   print(p)
 }
 
-plot_pre_carbon_pricing_network(panel_seq, "Electricity", state_var = "state8")
-plot_pre_carbon_pricing_network(panel_seq, "Industry", state_var = "state8")
-plot_pre_carbon_pricing_network(panel_seq, "Transport", state_var = "state8")
-plot_pre_carbon_pricing_network(panel_seq, "Buildings", state_var = "state8")
+p_pre_elec <- plot_pre_carbon_pricing_network(panel_seq, "Electricity", state_var = "state8")
+p_pre_ind <- plot_pre_carbon_pricing_network(panel_seq, "Industry", state_var = "state8")
+p_pre_tran <- plot_pre_carbon_pricing_network(panel_seq, "Transport", state_var = "state8")
+p_pre_bld <- plot_pre_carbon_pricing_network(panel_seq, "Buildings", state_var = "state8")
+
+(p_pre_elec | p_pre_ind) /
+  (p_pre_tran | p_pre_bld) +
+  plot_annotation(tag_levels = "A") +
+  plot_layout(guides = "collect") &
+  theme(legend.position = "right")
+
+
+# Policy event-time heatmap
+
+library(forcats)
+
+window <- 15
+
+
+heat_df <- panel_seq %>%
+  filter(!is.na(first_price_year), introduction == 1) %>%
+  filter(`Broad Category` != "Taxation") %>%
+  filter(`Broad Category` != "Driving taxation") %>%
+  mutate(event_year = year - first_price_year) %>%
+  filter(event_year <= 0) %>%
+  mutate(
+    period = case_when(
+      event_year <= -10 ~ "10+ years before",
+      event_year <= -5  ~ "5-10 years before",
+      event_year <= -1  ~ "1-4 years before",
+      event_year == 0   ~ "Carbon pricing year"
+    ),
+    period = factor(
+      period,
+      levels = c(
+        "10+ years before",
+        "5-10 years before",
+        "1-4 years before",
+        "Carbon pricing year"
+      )
+    )
+  ) %>%
+  count(`Broad Category`, period, name = "n")
+
+ggplot(heat_df, aes(x = period, y = fct_reorder(`Broad Category`, n, .fun = sum), fill = n)) +
+  geom_tile(color = "white", linewidth = 0.2) +
+  labs(
+    x = NULL,
+    y = NULL,
+    fill = "Introductions"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(angle = 0, vjust = 0.5)
+  )
+
+
+
+heat_df <- panel_seq %>%
+  filter(!is.na(first_price_year), introduction == 1) %>%
+  filter(`Broad Category` != "Taxation") %>%
+  filter(`Broad Category` != "Driving taxation") %>%
+  mutate(event_year = year - first_price_year) %>%
+  filter(event_year <= 0) %>%
+  mutate(
+    period = case_when(
+      event_year <= -10 ~ "10+ years before",
+      event_year <= -5  ~ "5-10 years before",
+      event_year <= -1  ~ "1-4 years before",
+      event_year == 0   ~ "Carbon pricing year"
+    ),
+    period = factor(
+      period,
+      levels = c(
+        "10+ years before",
+        "5-10 years before",
+        "1-4 years before",
+        "Carbon pricing year"
+      )
+    ),
+    # numeric score for ordering rows by timing
+    period_score = case_when(
+      period == "10+ years before" ~ 3,
+      period == "5-10 years before" ~ 2,
+      period == "1-4 years before" ~ 1,
+      period == "Carbon pricing year" ~ 0
+    )
+  ) %>%
+  count(Module,`Broad Category`, period, period_score, name = "n") %>%
+  group_by(Module, `Broad Category`) %>%
+  mutate(share = n / sum(n)) %>%
+  ungroup()
+
+policy_order <- heat_df %>%
+  group_by(`Broad Category`) %>%
+  summarise(
+    avg_timing = weighted.mean(period_score, share),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(avg_timing)) %>%
+  pull(`Broad Category`)
+
+heat_df <- heat_df %>%
+  mutate(`Broad Category` = factor(`Broad Category`, levels = policy_order))
+
+
+ggplot(heat_df, aes(x = period, y = `Broad Category`, fill = share)) +
+  geom_tile(color = "white", linewidth = 0.2) +
+  facet_wrap(~Module, ncol = 2) +
+  scale_fill_viridis_c(
+    option = "C",
+    name = "Share",
+    labels = scales::percent_format(accuracy = 1)
+  ) +
+  labs(
+    x = NULL,
+    y = NULL,
+    title = "Policy introductions before carbon pricing"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.x = element_text(size = 11),
+    axis.text.y = element_text(size = 11)
+  )
+
 
 
 # Policy transition heatmap

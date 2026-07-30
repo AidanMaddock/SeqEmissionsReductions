@@ -9,6 +9,10 @@ library(cobalt)
 library(marginaleffects)
 library(WeightIt)
 
+
+devtools::install_github("katiejolly/nationalparkcolors")
+library(nationalparkcolors)
+
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 04_MSM.r
@@ -18,6 +22,7 @@ library(WeightIt)
 # Inputs: policies.csv, emissions_sector.csv, controls.csv
 # Outputs: joined_data.csv
 #=========================================================
+
 
 # 1. Policy panel building
 
@@ -30,7 +35,7 @@ subsidy_categories <- c("Green subsidy", "Renewable subsidy", "Financing mechani
 standards_categories <- c("Air pollution standard", "Energy efficiency mandate", "Building code", "Minimum energy performance standard", "Renewable portfolio standard", "Label")
 reg_categories <- c("Ban", "Speed Limit", "Planning")
 
-# Filter out first few years and latest ones 
+# Filter out first few years and latest ones to align with the dataset
 oecd_data <- oecd_data %>%
   filter(!year %in% c(1990,1991,1992,1993,1994, 1995, 2023)) 
 
@@ -135,7 +140,7 @@ panel_sectors <- panel %>%
     first_reg_year   = if (any(reg == 1))   min(year[reg == 1])   else 0,
     
     priceintro = as.integer(year == first_price_year),
-    regintro   = as.integer(year == first_sub_year),
+    regintro   = as.integer(year == first_reg_year),
     
     lag_price_string = lag(price_stringency, n = 1, default = 0),
     lag_reg_string   = lag(reg_stringency, n = 1,  default = 0),
@@ -159,8 +164,6 @@ write_csv(panel,"00_raw_data/joined_data.csv") # Used in 05_matrix.R
 
 
 # Weighting (time-varying) -------------------------------------------------------------------------
-
-
 lag_vars <- c(
   "GDPpc2015", "annual_HDD", "annual_CDD", "ruleoflaw",
   "importpcGDP", "tempvariation", "urbpop", "price", "subsidy", "standard"
@@ -184,7 +187,7 @@ panel_msm <- panel_data %>%
   arrange(year, .by_group = TRUE) %>%
   mutate(
     across(all_of(lag_vars), ~ lag(.x), .names = "lag_{.col}"),
-
+    
     sub_timing = if_else(
       is.na(first_price_year) | is.na(first_sub_year),
       NA_character_,
@@ -292,7 +295,6 @@ bal.tab(W_std_den)
 
 love.plot(W_std_den)
 
-
 panel_msm_weighted <- panel_msm %>%
   arrange(ISO, year) %>%
   group_by(ISO, Module) %>%
@@ -313,15 +315,140 @@ panel_msm_weighted <- panel_msm_weighted %>%
 summary(panel_msm_weighted$sw)
 
 
-msm_model <- feols(
-  lnEmissions_co2e ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+#Look at excluding israel?
+
+
+
+# Policy Sequencing Score Calculation -------------------------------------
+
+policy_cols <- c("subsidy", "standard")
+
+
+panel_sectors <- panel_sectors %>%
+  mutate(unit_id = interaction(ISO, Module, drop = TRUE))
+
+adopt_years <- panel_sectors %>%
+  group_by(ISO, Module) %>%
+  summarise(
+    price = if(any(price==1)) min(year[price==1]) else NA,
+    subsidy = if(any(subsidy==1)) min(year[subsidy==1]) else NA,
+    standard = if(any(standard==1)) min(year[standard==1]) else NA,
+    regulation = if(any(reg==1)) min(year[reg==1]) else NA,
+    .groups="drop"
+  )
+
+policies <- c("price","subsidy","standard","regulation")
+
+pair_freq <- expand.grid(
+  first = policies,
+  second = policies,
+  stringsAsFactors = FALSE
+) |>
+  dplyr::filter(first != second) |>
+  rowwise() |>
+  mutate(
+    
+    numerator = sum(
+      adopt_years[[first]] < adopt_years[[second]],
+      na.rm = TRUE
+    ),
+    
+    denominator = sum(
+      !is.na(adopt_years[[second]])
+    ),
+    
+    frequency = numerator / denominator
+    
+  ) |>
+  ungroup()
+
+pair_lookup <- pair_freq %>%
+  mutate(key = paste(first, second, sep = "__")) %>%
+  select(key, frequency) %>%
+  deframe()
+
+#------------------------------------------------------------
+# 3) Function to compute sequencing score for one unit-year
+#    - find policies adopted by year t
+#    - determine their observed ordering
+#    - look up frequencies
+#    - sum them (paper method)
+#------------------------------------------------------------
+score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
+  ad_years <- ad_years[policy_cols]
+  names(ad_years) <- policy_cols
+  
+  adopted_now <- policy_cols[!is.na(ad_years) & ad_years <= year_t]
+  
+  # Need at least 2 adopted policies to form an ordering
+  if (length(adopted_now) < 2) return(0)
+  
+  pairs <- combn(adopted_now, 2, simplify = FALSE)
+  
+  pair_scores <- vapply(pairs, function(pair) {
+    a <- pair[1]
+    b <- pair[2]
+    
+    ay <- ad_years[[a]]
+    by <- ad_years[[b]]
+    
+    # If same-year adoption, treat as neutral
+    if (isTRUE(ay == by)) return(0.5)
+    
+    # Use the observed ordering
+    key <- if (ay < by) paste(a, b, sep = "__") else paste(b, a, sep = "__")
+    
+    val <- pair_lookup[[key]]
+    if (is.null(val) || is.na(val)) 0 else val
+  }, numeric(1))
+  
+  sum(pair_scores, na.rm = TRUE)
+}
+
+#------------------------------------------------------------
+# 4) Attach the score to each ISO x Module x year
+#------------------------------------------------------------
+panel_scored <- panel_sectors %>%
+  left_join(adopt_years, by = c("ISO", "Module"), suffix = c("", "_adopt")) %>%
+  rowwise() %>%
+  mutate(
+    sequencing_score = score_one_row(
+      year_t = year,
+      ad_years = c(
+        price    = priceintro,
+        subsidy  = subsidy,
+        standard = standard,
+        reg      = regintro
+      ),
+      pair_lookup = pair_lookup,
+      policy_cols = policy_cols
+    )
+  ) %>%
+  ungroup()
+
+
+# Models ------------------------------------------------------------------
+
+
+# Model for co2 only
+msm_model_co2 <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
   data    = panel_msm_weighted, 
   weights = ~sw,
   cluster = ~ ISO^Module
 )
-summary(msm_model)
+summary(msm_model_co2)
 
+# Model for non-co2 emissions
+msm_model_nonco2 <- feols(
+  lnEmissions_nonco2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted,
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_nonco2)
 
 msm_reg_model <- feols(
   lnEmissions_co2 ~ + lag_price_string + reg_timing + lag_price_string:reg_timing + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
@@ -336,10 +463,168 @@ summary(msm_reg_model)
 pct_effects <- 100 * (exp(coef(msm_reg_model)[grep("^pathgroup", names(coef(msm_reg_model)))]) - 1)
 pct_effects
 
+# Tables 
+var_labels <- c(
+  lag_price_string = "Lagged presence of price",
+  sub_timing1to4_before = "Subsidy timing: 1–4 years before",
+  sub_timing5plus_before = "Subsidy timing: 5+ years before",
+  std_timing1to4_before = "Standard timing: 1–4 years before",
+  std_timing5plus_before = "Standard timing: 5+ years before",
+  lag_numsub = "Lagged number of subsidies",
+  lag_numstandard = "Lagged number of standards",
+  pop = "Population",
+  GDPpc2015 = "GDP per capita (2015)",
+  annual_HDD = "Annual heating degree days",
+  annual_CDD = "Annual cooling degree days",
+  tempvariation = "Temperature variation",
+  importpcGDP = "Imports / GDP",
+  urbpop = "Urban population",
+  ruleoflaw = "Rule of law",
+  AVservicepcGDP = "Services / GDP",
+  "lag_price_string:sub_timing1to4_before" = "Price × subsidy timing: 1–4 years before",
+  "lag_price_string:sub_timing5plus_before" = "Price × subsidy timing: 5+ years before",
+  "lag_price_string:std_timing1to4_before" = "Price × standard timing: 1–4 years before",
+  "lag_price_string:std_timing5plus_before" = "Price × standard timing: 5+ years before"
+)
+
+etable(
+  msm_model,
+  msm_model_co2,
+  headers = c("GHG emissions (CO₂e)", "CO₂ emissions"),
+  dict = var_labels,
+  style.tex = style.tex("aer"),
+  depvar = FALSE,
+  order = c(
+    "lag_price_string",
+    "lag_price_string:sub_timing",
+    "lag_price_string:std_timing",
+    "sub_timing",
+    "std_timing",
+    "lag_numsub",
+    "lag_numstandard",
+    "pop",
+    "GDPpc2015",
+    "annual_HDD",
+    "annual_CDD",
+    "tempvariation",
+    "importpcGDP",
+    "urbpop",
+    "ruleoflaw",
+    "AVservicepcGDP"
+  ),
+  se = "cluster",
+  cluster = ~ ISO^Module,
+  fitstat = ~ n + r2,
+  tex = TRUE
+)
+
+
+etable(
+  list(
+    "CO2" = msm_model_co2,
+    "Non-CO2" = msm_model_nonco2
+  ),
+  dict = var_labels,
+  tex = TRUE,
+  title = "Climate laws and their effect on emissions",
+  style.tex = style.tex("aer"),
+  depvar = FALSE,
+  fitstat = ~ n + r2,
+  digits = 3,
+  signif.code = c("***" = 0.01, "**" = 0.05, "*" = 0.10)
+)
+
+
 
 # Predicted effects (policy counterfactual)
+actual_path <- panel_msm_weighted %>%
+  mutate(emissions = exp(lnEmissions_co2e)) %>%
+  group_by(year) %>%
+  summarise(
+    emissions = mean(emissions, na.rm = TRUE),
+    scenario = "Observed",
+    .groups = "drop"
+  )
+
+# 2) Counterfactual: no sequencing
+#    Set both timing variables to the baseline category.
+cf_data <- panel_msm_weighted %>%
+  mutate(
+    sub_timing = factor("Concurrent_or_After",
+                        levels = c("Concurrent_or_After", "1to4_before", "5plus_before")),
+    std_timing = factor("Concurrent_or_After",
+                        levels = c("Concurrent_or_After", "1to4_before", "5plus_before"))
+  )
+
+cf_data$pred_cf_log <- as.numeric(predict(msm_model, newdata = cf_data))
+cf_path <- cf_data %>%
+  mutate(emissions = exp(pred_cf_log)) %>%
+  group_by(year) %>%
+  summarise(
+    emissions = mean(emissions, na.rm = TRUE),
+    scenario = "Counterfactual: no sequencing",
+    .groups = "drop"
+  )
 
 
+
+std_eff <- avg_comparisons(
+  msm_model,
+  variables = "std_timing",
+  by = "year",
+  newdata = panel_msm_weighted
+) %>%
+  filter(term == "std_timing") %>%
+  filter(grepl("5plus_before", contrast)) %>%
+  mutate(
+    pct_est  = 100 * (exp(estimate) - 1),
+    pct_low  = 100 * (exp(conf.low) - 1),
+    pct_high = 100 * (exp(conf.high) - 1)
+  )
+
+# Publication-style plot
+p_std <- ggplot(std_eff, aes(x = year, y = pct_est)) +
+  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
+  geom_ribbon(aes(ymin = pct_low, ymax = pct_high), alpha = 0.15) +
+  geom_line(linewidth = 1.1) +
+  labs(
+    x = "Year",
+    y = "Effect of standards introduced 5+ years before pricing on emissions (%)"
+  ) +
+  theme_classic(base_size = 11) +
+  theme(
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(colour = "black")
+  )
+
+p_std
+
+# 3) Combine for plotting
+plot_df <- bind_rows(actual_path, cf_path)
+
+
+park_palette("SmokyMountains")
+ggplot(plot_df, aes(x = year, y = emissions, color = scenario)) +
+  geom_line(linewidth = 1.2) +
+  scale_colour_manual(
+      values = park_palette("Badlands")
+  ) +
+  labs(
+    x = "Year",
+    y = "Emissions",
+    color = NULL
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+
+
+# Robustness Checks -------------------------------------------------------
+
+# Do robustness checks here
 
 
 

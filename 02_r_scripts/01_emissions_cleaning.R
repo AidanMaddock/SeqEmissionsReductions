@@ -92,13 +92,125 @@ co2e_sector_long <- co2e_sector %>%
     values_to = "Emissions_co2e"
   )
 
+
+# Same for N20
+N2O <- read_excel(
+  "00_raw_data/emissions/EDGAR_N2O_1970_2024.xlsx", sheet = 2, skip = 9 #skip header
+)
+
+
+N2O_sector_mapped <- N2O %>%
+  left_join(sector_map,
+            by = "ipcc_code_2006_for_standard_report")
+
+# Likewise aggregate for carbon equivalent emissions (including N2O, CH4...)
+N2O_sector <- N2O_sector_mapped %>%
+  filter(!is.na(Sector)) %>%
+  group_by(Name, Sector) %>%
+  summarise(
+    across(
+      starts_with("Y_"),
+      ~ sum(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+N2O_sector_long <- N2O_sector %>%
+  pivot_longer(
+    cols = starts_with("Y_"),
+    names_to = "year",
+    values_to = "Emissions_N2O"
+  )
+
+# CH4
+CH4 <- read_excel(
+  "00_raw_data/emissions/EDGAR_CH4_1970_2024.xlsx",
+  sheet = 2,
+  skip = 9
+)
+
+CH4_sector_mapped <- CH4 %>%
+  left_join(
+    sector_map,
+    by = "ipcc_code_2006_for_standard_report"
+  )
+
+CH4_sector <- CH4_sector_mapped %>%
+  filter(!is.na(Sector)) %>%
+  group_by(Name, Sector) %>%
+  summarise(
+    across(
+      starts_with("Y_"),
+      ~ sum(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+CH4_sector_long <- CH4_sector %>%
+  pivot_longer(
+    cols = starts_with("Y_"),
+    names_to = "year",
+    values_to = "Emissions_CH4"
+  )
+
+# F-gases
+F <- read_excel(
+  "00_raw_data/emissions/EDGAR_AR5g_F-gases_1990_2024.xlsx",
+  sheet = 2,
+  skip = 9
+)
+
+F_sector_mapped <- F %>%
+  left_join(
+    sector_map,
+    by = "ipcc_code_2006_for_standard_report"
+  )
+
+F_sector <- F_sector_mapped %>%
+  filter(!is.na(Sector)) %>%
+  group_by(Name, Sector) %>%
+  summarise(
+    across(
+      starts_with("Y_"),
+      ~ sum(.x, na.rm = TRUE)
+    ),
+    .groups = "drop"
+  )
+
+F_sector_long <- F_sector %>%
+  pivot_longer(
+    cols = starts_with("Y_"),
+    names_to = "year",
+    values_to = "Emissions_F"
+  )
+
+emissions_nonco2 <- N2O_sector_long %>%
+  left_join(
+    CH4_sector_long,
+    by = c("Name", "Sector", "year")
+  ) %>%
+  left_join(
+    F_sector_long,
+    by = c("Name", "Sector", "year")
+  ) %>%
+  mutate(
+    nonco2 = coalesce(Emissions_N2O, 0) +
+      coalesce(Emissions_CH4, 0) +
+      coalesce(Emissions_F, 0)
+  )
+
+
+
+
 # Open country dataset for mapping to ISO
 country_groups <- read_csv("01_tidy_data/CountryGroupings.csv")
 
 # Combine emissions co2 and equivalent together
 emissions_combined <-co2_sector_long
 emissions_combined <- emissions_combined %>%
-  left_join(co2e_sector_long, by = c("Name", "Sector", "year"))
+  left_join(co2e_sector_long, by = c("Name", "Sector", "year")) %>%
+  left_join(emissions_nonco2, by = c("Name", "Sector", "year"))
+
 
 # Rename some countries for parity with CountryGroupings
 emissions_combined <- emissions_combined %>%
@@ -114,8 +226,12 @@ emissions_combined <- emissions_combined %>%
   mutate( 
     year = substr(year, 3, nchar(year)), # Trim the y_ prefix on year
     lnEmissions_co2 = log(Emissions_co2),  # Make log emissions variables
-    lnEmissions_co2e = log(Emissions_co2e)
+    lnEmissions_co2e = log(Emissions_co2e),
+    lnEmissions_nonco2 = log(nonco2)
   ) %>%
+  select(-Emissions_N2O) %>%
+  select(-Emissions_CH4) %>%
+  select(-Emissions_F) %>%
   rename(Module = Sector)
 
 # Save outputs 
