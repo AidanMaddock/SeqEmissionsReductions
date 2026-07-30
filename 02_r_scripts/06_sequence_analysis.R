@@ -217,7 +217,84 @@ cluster_membership <- bind_rows(lapply(names(results), function(m) {
 
 write.csv(cluster_membership, "sequence_clusters_all_modules.csv", row.names = FALSE)
 
+# 5. Simple sequence plot 
 
+shape_map <- c(
+  "Technology Standards" = 16,
+  "Performance Standards" = 17,
+  "Carbon Pricing" = 15,
+  "Subsidy" = 18,
+  "Information" = 20,
+  "Other" = 8
+)
+
+# Color map for sector/module
+module_map <- c(
+  "Buildings" = "#7B3294",
+  "Electricity" = "#E41A1C",
+  "Industry" = "#00BFC4",
+  "Transport" = "#D95F02"
+)
+
+
+plot_df <- df %>%
+  filter(introduction == 1) %>%
+  filter(!is.na(year), !is.na(ISO), !is.na(Module), !is.na(Policytype_detail_new)) %>%
+  mutate(
+    ISO = factor(ISO, levels = rev(sort(unique(ISO)))),
+    Module = factor(Module, levels = names(module_map)),
+    Policytype_simple = case_when(
+      Policytype_detail_new %in% c(
+        "Other regulatory instruments",
+        "Other MBI",
+        "Other NMBI"
+      ) ~ "Other",
+      TRUE ~ Policytype_detail_new
+    ),
+    Policytype_simple = factor(Policytype_simple, levels = names(shape_map))
+  )
+
+plot_df <- df %>%
+  mutate(
+    Policytype_simple = case_when(
+      Policytype_detail_new %in% c(
+        "Other regulatory instruments",
+        "Other MBI",
+        "Other NMBI"
+      ) ~ "Other",
+      TRUE ~ Policytype_detail_new
+    )
+  ) %>%
+  filter(introduction == 1) %>%
+  filter(!is.na(year), !is.na(ISO), !is.na(Module), !is.na(Policytype_simple)) %>%
+  group_by(ISO, Policytype_simple, Module) %>%
+  filter(year == min(year, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    ISO = factor(ISO, levels = rev(sort(unique(ISO)))),
+    Module = factor(Module, levels = names(module_map)),
+    Policytype_simple = factor(Policytype_simple, levels = names(shape_map))
+  )
+
+ggplot(plot_df, aes(x = year, y = ISO, color = Module, shape = Policytype_simple)) +
+  geom_point(size = 2.8, alpha = 0.9,
+             position = position_jitter(width = 0.5, height = 0)) +
+  scale_color_manual(values = module_map, drop = FALSE) +
+  scale_shape_manual(values = shape_map, drop = FALSE) +
+  scale_x_continuous(breaks = seq(1995, 2025, 5), limits = c(1995, 2023)) +
+  labs(x = NULL, y = NULL, color = "Sector:", shape = "Instrument:") +
+  theme_classic(base_size = 13, base_family = "Times New Roman") +
+  theme(
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.title = element_text(face = "bold"),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    legend.key.height = unit(0.8, "cm"),
+    axis.title = element_blank(),
+    panel.border = element_blank(),
+    axis.line = element_line(colour = "black", linewidth = 0.2),
+  )
 
 
 # 5. Graph Plotting -------------------------------------------------------
