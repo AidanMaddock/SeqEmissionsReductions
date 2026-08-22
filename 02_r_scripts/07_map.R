@@ -14,7 +14,7 @@ groupings <- read_csv("01_tidy_data/CountryGroupings.csv", show_col_types = FALS
   distinct(ISO, .keep_all = TRUE) %>%
   mutate(
     in_grouping = TRUE,
-    is_hic = Classification == "UMICs" # Grouping by income 
+    is_hic = Classification == "UMICs" | Classification == "LMICs" # Grouping by income 
   )
 
 # World map data

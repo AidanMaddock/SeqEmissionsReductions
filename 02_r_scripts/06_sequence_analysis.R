@@ -6,6 +6,7 @@ library(tidygraph)
 library(ggraph)
 library(cowplot)
 library(readr)
+library(scales)
 
 #=========================================================
 # Project: Climate Policy Sequencing
@@ -28,10 +29,10 @@ panel_seq <- df %>%
     state4 = as.character(state)
   )
 
-# Optional: Richer state that builds a more detailed composite state
+# Richer state that builds a more detailed composite state
 panel_seq <- panel_seq %>%
   mutate(
-    state8 = case_when(
+    state16 = case_when(
       price == 0 & reg == 0 & subsidy == 0 & standard == 0 ~ "none",
       price == 1 & reg == 0 & subsidy == 0 & standard == 0 ~ "price",
       price == 0 & reg == 1 & subsidy == 0 & standard == 0 ~ "reg",
@@ -49,14 +50,61 @@ panel_seq <- panel_seq %>%
       price == 0 & reg == 1 & subsidy == 1 & standard == 1 ~ "reg_subsidy_standard",
       price == 1 & reg == 1 & subsidy == 1 & standard == 1 ~ "all_four",
       TRUE ~ "missing"
+    ), 
+    state8 = case_when(
+      price == 0 & subsidy == 0 & standard == 0 ~ "none",
+      price == 1 & subsidy == 0 & standard == 0 ~ "price",
+      price == 0 & subsidy == 1 & standard == 0 ~ "subsidy",
+      price == 0 & subsidy == 0 & standard == 1 ~ "standard",
+      price == 1 & subsidy == 1 & standard == 0 ~ "price_subsidy",
+      price == 1 & subsidy == 0 & standard == 1 ~ "price_standard",
+      price == 0 & subsidy == 1 & standard == 1 ~ "subsidy_standard",
+      price == 1 & subsidy == 1 & standard == 1 ~ "all_three",
+      TRUE ~ "missing"
+    ),
+    state8reg = case_when(
+      price == 0 & subsidy == 0 & reg == 0 ~ "none",
+      price == 1 & subsidy == 0 & reg == 0 ~ "price",
+      price == 0 & subsidy == 1 & reg == 0 ~ "subsidy",
+      price == 0 & subsidy == 0 & reg == 1 ~ "reg",
+      price == 1 & subsidy == 1 & reg == 0 ~ "price_subsidy",
+      price == 1 & subsidy == 0 & reg == 1 ~ "price_reg",
+      price == 0 & subsidy == 1 & reg == 1 ~ "subsidy_reg",
+      price == 1 & subsidy == 1 & reg == 1 ~ "all_three",
+      TRUE ~ "missing"
     )
+    
   )
 
 # ------------------------------------------------
 # 2) Helper functions to convert long policy panel -> wide sequences
 # ------------------------------------------------
+
+
+state_order <- c(
+  "none",
+  "price",
+  "subsidy",
+  "standard",
+  "price_subsidy",
+  "price_standard",
+  "subsidy_standard",
+  "all_three"
+)
+
+state_order_reg <- c(
+  "none",
+  "price",
+  "subsidy",
+  "reg",
+  "price_subsidy",
+  "price_reg",
+  "subsidy_reg",
+  "all_three"
+)
+
 # Helper that summarises long policy panel into country-module-year-state panel
-prep_seq_df <- function(dat, state_col = "state4") {
+prep_seq_df <- function(dat, state_col = "state8reg") {
   year_grid <- seq(min(dat$year, na.rm = TRUE), max(dat$year, na.rm = TRUE), by = 1)
   
   dat %>%
@@ -89,8 +137,10 @@ make_seqobj <- function(dat_long) {
   
   # Use ISO if unique, otherwise make it unique
   rownames(seq_df) <- make.unique(as.character(wide$ISO))
+  
+  
   head(rownames(seq_df))
-  seqdef(seq_df)
+  seqdef(seq_df, alphabet = state_order_reg)
 }
 
 # ------------------------------------------------
@@ -100,6 +150,8 @@ modules <- sort(unique(panel_seq$Module))
 
 results <- vector("list", length(modules))
 names(results) <- modules
+
+seq_objects <- list()
 
 for (m in modules) {
   message("Running sequence analysis for: ", m)
@@ -111,12 +163,105 @@ for (m in modules) {
   # use state4 for the simple 4-state analysis
   # use state8 for the richer policy-mix analysis
   #dat_m_seq <- prep_seq_df(dat_m, state_col = "state4")
-   dat_m_seq <- prep_seq_df(dat_m, state_col = "state8")
+   dat_m_seq <- prep_seq_df(dat_m, state_col = "state8reg")
   
-  seq_m <- make_seqobj(dat_m_seq) # make data into a sequence object
+   seq_objects[[m]] <- make_seqobj(dat_m_seq) # make data into a sequence object
+   
+} 
+
+
+# Figure 4.2: State Distributions
+mods <- names(seq_objects)
+layout(matrix(c(1, 2, 5,
+                3, 4, 5), nrow = 2, byrow = TRUE),
+       widths = c(1, 1, 0.4))
+
+par(mar = c(3, 3, 3, 1))
+
+for (i in seq_along(mods)) {
+  m <- mods[i]
+  seqobj <- seq_objects[[m]]
+  
+  xtlab_clean <- gsub("^y", "", colnames(as.data.frame(seqobj)))
+  
+  seqdplot(
+    seqobj,
+    family = "Times",
+    with.legend = FALSE,
+    main = m,
+    border = NA,
+    xlab = "",
+    ylab = if (i %in% c(1, 3)) "Frequency" else "",
+    xtlab = xtlab_clean,
+    cex.main = 1.8,
+    cex.lab  = 1.2,
+    cex.axis = 1.1,
+    xaxis = i %in% c(3, 4),
+    yaxis = i %in% c(1, 3)
+  )
+}
+
+# legend panel on the right
+par(mar = c(0, 0, 0, 0))
+par(family = "Times-Roman")
+plot.new()
+legend(
+  "center",
+  title = "Policy State",
+  legend = alphabet(seq_objects[[mods[1]]]),
+  fill = attr(seq_objects[[mods[1]]], "cpal"),
+  bty = "n",
+  cex = 1.7,
+  xpd = NA
+)
+
+
+# Figure 4.4: Sequence Frequencies 
+par(mar = c(4, 5, 3, 1))
+for (i in seq_along(mods)) {
+  m <- mods[i]
+  seqobj <- seq_objects[[m]]
+  
+  xtlab_clean <- gsub("^y", "", colnames(as.data.frame(seqobj)))
+  
+  seqfplot(
+    seqobj,
+    idxs = 1:8,
+    family = "Times",
+    with.legend = FALSE,
+    main = m,
+    border = NA,
+    xlab = "",
+    xtlab = xtlab_clean,
+    cex.main = 1.8,
+    cex.lab  = 1.2,
+    cex.axis = 1.1,
+    xaxis = i %in% c(3, 4),
+    yaxis = TRUE
+  )
+}
+
+par(mar = c(0, 0, 0, 0))
+par(family = "Times-Roman")
+plot.new()
+legend(
+  "center",
+  title = "Policy State",
+  legend = alphabet(seq_objects[[mods[1]]]),
+  fill = attr(seq_objects[[mods[1]]], "cpal"),
+  bty = "n",
+  cex = 1.7,
+  xpd = NA
+)
+
+
+
+
+
+
+
   
   # Descriptive plots
-  pdf(paste0("sequence_plots_", m, ".pdf"), width = 12, height = 8)
   par(mfrow = c(2, 2))
   seqdplot(seq_m, with.legend = "right", main = paste(m, "- state distribution"))
   seqIplot(seq_m, sortv = "from.start", main = paste(m, "- index plot"))
@@ -201,21 +346,7 @@ seqIplot(
   main = "Industry by cluster"
 )
 
-# ------------------------------------------------
-# 5) Export a cluster membership file for each module
-# ------------------------------------------------
-cluster_membership <- bind_rows(lapply(names(results), function(m) {
-  cl <- results[[m]]$clusters
-  ids <- rownames(results[[m]]$seqobj)
-  
-  tibble(
-    id = ids,
-    Module = m,
-    cluster = as.integer(cl)
-  )
-}))
 
-write.csv(cluster_membership, "sequence_clusters_all_modules.csv", row.names = FALSE)
 
 # 5. Simple sequence plot 
 

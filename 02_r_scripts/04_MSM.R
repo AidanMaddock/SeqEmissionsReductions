@@ -8,6 +8,8 @@ library(nnet)
 library(cobalt)
 library(marginaleffects)
 library(WeightIt)
+library(scales)
+library(pracma)
 
 
 devtools::install_github("katiejolly/nationalparkcolors")
@@ -50,9 +52,13 @@ panel <- oecd_data %>%
     is_subsidy = as.integer(Cluster_categories == "Subsidy"),
     is_standard = as.integer(Cluster_categories == "Information"),
     is_reg = as.integer(Cluster_categories == "Regulation"),
+    is_tax = as.integer(`Policy_name_fig_1` == "Carbon tax"),
+    is_ets = as.integer(`Policy_name_fig_1` == "Emission trading scheme"),
     
     # yearly introduction events based on introduction or intensification
     priceintro = as.integer(is_price  & introduction == 1 | is_price  & intensification == 1),
+    etsintro = as.integer(is_ets  & introduction == 1 | is_ets  & intensification == 1),
+    taxintro = as.integer(is_tax  & introduction == 1 | is_tax  & intensification == 1),
     regintro = as.integer(is_reg & (introduction == 1 | intensification == 1)),
     subsidyintro   = as.integer(is_subsidy & introduction == 1 | is_subsidy  & intensification == 1),
     standardintro   = as.integer(is_standard & introduction == 1 | is_standard  & intensification == 1),
@@ -60,6 +66,8 @@ panel <- oecd_data %>%
     # cumulative in-force states
     price = cummax(priceintro),
     reg   = cummax(regintro),
+    ets = cummax(etsintro),
+    tax = cummax(taxintro),
     subsidy  = cummax(subsidyintro),
     standard  = cummax(standardintro),
     
@@ -112,6 +120,8 @@ panel_sectors <- panel %>%
     numstandard = sum(standard == 1 & is_standard, na.rm = TRUE),
     
     price = as.integer(any(price == 1, na.rm = TRUE)),
+    ets = as.integer(any(ets == 1, na.rm = TRUE)),
+    tax = as.integer(any(tax == 1, na.rm = TRUE)),
     reg   = as.integer(any(reg   == 1, na.rm = TRUE)),
     subsidy = as.integer(any(subsidy == 1), na.rm = TRUE),
     standard = as.integer(any(standard == 1), na.rm = TRUE),
@@ -122,6 +132,14 @@ panel_sectors <- panel %>%
     
     price_stringency = if (any(is_price)) {
       mean(Value[is_price], na.rm = TRUE)
+    } else NA_real_,
+    
+    tax_stringency = if (any(tax == 1)) {
+      mean(Value[tax == 1], na.rm = TRUE)
+    } else NA_real_,
+    
+    ets_stringency = if (any(is_ets)) {
+      mean(Value[is_ets], na.rm = TRUE)
     } else NA_real_,
     
     reg_stringency = if (any(!is_price)) {
@@ -144,6 +162,8 @@ panel_sectors <- panel %>%
     
     lag_price_string = lag(price_stringency, n = 1, default = 0),
     lag_reg_string   = lag(reg_stringency, n = 1,  default = 0),
+    lag_ets_string = lag(ets_stringency, n = 1,default = 0),
+    lag_tax_string = lag(tax_stringency, n = 1,default = 0),
     lag_numprice     = lag(numprice, n = 1,  default = 0),
     lag_numreg       = lag(numreg, n = 1, default = 0),
     lag_numsub = lag(numsubsidy, n = 1, default = 0),
@@ -319,68 +339,81 @@ summary(panel_msm_weighted$sw)
 
 
 
-# Policy Sequencing Score Calculation -------------------------------------
+# -------------------------------------------------------------------------
 
-policy_cols <- c("subsidy", "standard")
-
-
-panel_sectors <- panel_sectors %>%
-  mutate(unit_id = interaction(ISO, Module, drop = TRUE))
-
-adopt_years <- panel_sectors %>%
-  group_by(ISO, Module) %>%
+# Policy Sequencing Score Calculation
+# First year of adoption for all policies
+adopt_years <- panel %>%
+  group_by(ISO, Module, Policy) %>%
   summarise(
-    price = if(any(price==1)) min(year[price==1]) else NA,
-    subsidy = if(any(subsidy==1)) min(year[subsidy==1]) else NA,
-    standard = if(any(standard==1)) min(year[standard==1]) else NA,
-    regulation = if(any(reg==1)) min(year[reg==1]) else NA,
-    .groups="drop"
+    adopt_year = if (any(introduction == 1, na.rm = TRUE)) {
+      min(year[introduction == 1], na.rm = TRUE)
+    } else {
+      NA_integer_
+    },
+    .groups = "drop"
+  ) %>%
+  pivot_wider(
+    names_from = Policy,
+    values_from = adopt_year
   )
 
-policies <- c("price","subsidy","standard","regulation")
+# Get names of policy columns
+policy_cols <- setdiff(names(adopt_years), c("ISO", "Module"))
 
-pair_freq <- expand.grid(
-  first = policies,
-  second = policies,
-  stringsAsFactors = FALSE
-) |>
-  dplyr::filter(first != second) |>
-  rowwise() |>
-  mutate(
-    
-    numerator = sum(
-      adopt_years[[first]] < adopt_years[[second]],
-      na.rm = TRUE
-    ),
-    
-    denominator = sum(
-      !is.na(adopt_years[[second]])
-    ),
-    
-    frequency = numerator / denominator
-    
-  ) |>
-  ungroup()
 
-pair_lookup <- pair_freq %>%
-  mutate(key = paste(first, second, sep = "__")) %>%
-  select(key, frequency) %>%
-  deframe()
+# Pair lookup frequencies from observed adoption ordering
+build_pair_lookup_df <- function(adopt_years, policy_cols) {
+  pairs <- combn(policy_cols, 2, simplify = FALSE)
+  
+  bind_rows(lapply(pairs, function(pair) {
+    a <- pair[1]
+    b <- pair[2]
+    
+    tmp <- adopt_years %>%
+      filter(!is.na(.data[[a]]), !is.na(.data[[b]]))
+    
+    if (nrow(tmp) == 0) {
+      return(tibble(
+        key = c(paste(a, b, sep = "__"), paste(b, a, sep = "__")),
+        freq = c(NA_real_, NA_real_)
+      ))
+    }
+    
+    a_before_b <- sum(tmp[[a]] < tmp[[b]], na.rm = TRUE)
+    b_before_a <- sum(tmp[[b]] < tmp[[a]], na.rm = TRUE)
+    denom <- a_before_b + b_before_a
+    
+    if (denom == 0) {
+      freq_ab <- NA_real_
+      freq_ba <- NA_real_
+    } else {
+      freq_ab <- a_before_b / denom
+      freq_ba <- b_before_a / denom
+    }
+    
+    tibble(
+      key = c(paste(a, b, sep = "__"), paste(b, a, sep = "__")),
+      freq = c(freq_ab, freq_ba)
+    )
+  }))
+}
+
+pair_lookup_df <- build_pair_lookup_df(adopt_years, policy_cols)
+pair_lookup <- setNames(pair_lookup_df$freq, pair_lookup_df$key)
 
 #------------------------------------------------------------
-# 3) Function to compute sequencing score for one unit-year
+# 3) Score one unit-year
 #    - find policies adopted by year t
 #    - determine their observed ordering
 #    - look up frequencies
-#    - sum them (paper method)
+#    - sum them
 #------------------------------------------------------------
 score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
   ad_years <- ad_years[policy_cols]
-  names(ad_years) <- policy_cols
   
   adopted_now <- policy_cols[!is.na(ad_years) & ad_years <= year_t]
   
-  # Need at least 2 adopted policies to form an ordering
   if (length(adopted_now) < 2) return(0)
   
   pairs <- combn(adopted_now, 2, simplify = FALSE)
@@ -392,14 +425,14 @@ score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
     ay <- ad_years[[a]]
     by <- ad_years[[b]]
     
-    # If same-year adoption, treat as neutral
-    if (isTRUE(ay == by)) return(0.5)
+    # Same-year adoption: neutral
+    if (!is.na(ay) && !is.na(by) && ay == by) return(0.5)
     
-    # Use the observed ordering
+    # Observed ordering key
     key <- if (ay < by) paste(a, b, sep = "__") else paste(b, a, sep = "__")
     
-    val <- pair_lookup[[key]]
-    if (is.null(val) || is.na(val)) 0 else val
+    val <- pair_lookup[key]
+    if (length(val) == 0 || is.na(val)) 0 else as.numeric(val)
   }, numeric(1))
   
   sum(pair_scores, na.rm = TRUE)
@@ -408,23 +441,27 @@ score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
 #------------------------------------------------------------
 # 4) Attach the score to each ISO x Module x year
 #------------------------------------------------------------
-panel_scored <- panel_sectors %>%
-  left_join(adopt_years, by = c("ISO", "Module"), suffix = c("", "_adopt")) %>%
+unit_year_panel <- panel %>%
+  distinct(ISO, Module, year)
+
+# fix ≥ should not automaticlaly embed to module
+panel_scored <- unit_year_panel %>%
+  left_join(adopt_years, by = c("ISO", "Module")) %>%
   rowwise() %>%
   mutate(
     sequencing_score = score_one_row(
       year_t = year,
-      ad_years = c(
-        price    = priceintro,
-        subsidy  = subsidy,
-        standard = standard,
-        reg      = regintro
-      ),
+      ad_years = setNames(c_across(all_of(policy_cols)), policy_cols),
       pair_lookup = pair_lookup,
       policy_cols = policy_cols
     )
   ) %>%
+  select("ISO") %>%
+  select("Module") %>%
+  select("Year") %>%
+  select("sequencing_score") %>%
   ungroup()
+
 
 
 # Models ------------------------------------------------------------------
@@ -450,6 +487,27 @@ msm_model_nonco2 <- feols(
 )
 summary(msm_model_nonco2)
 
+# Model testing tax vs markets
+msm_model_taxets <- feols(
+  lnEmissions_co2 ~ lag_ets_string + lag_tax_string + lag_ets_string:sub_timing + lag_ets_string:std_timing + lag_tax_string:sub_timing + lag_tax_string:std_timing + sub_timing + std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted,
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_taxets)
+
+# Again for non-co2
+msm_model_nonco2_taxets <- feols(
+  lnEmissions_nonco2 ~ lag_ets_string + lag_tax_string + lag_ets_string:sub_timing + lag_ets_string:std_timing + lag_tax_string:sub_timing + lag_tax_string:std_timing + sub_timing + std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted,
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_nonco2_taxets)
+
+
 msm_reg_model <- feols(
   lnEmissions_co2 ~ + lag_price_string + reg_timing + lag_price_string:reg_timing + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
@@ -459,17 +517,197 @@ msm_reg_model <- feols(
 )
 summary(msm_reg_model)
 
+
+# Sequencing counterfactual plotting
+b <- coef(msm_model_co2)
+
+cf_data <- panel_msm_weighted %>%
+  mutate(seq_effect = 0)
+
+# Subsidy timing effects
+cf_data$seq_effect <-
+  cf_data$seq_effect +
+  ifelse(cf_data$sub_timing == "1to4_before",
+         b["sub_timing1to4_before"] +
+           b["lag_price_string:sub_timing1to4_before"] *
+           cf_data$lag_price_string,
+         0)
+
+cf_data$seq_effect <-
+  cf_data$seq_effect +
+  ifelse(cf_data$sub_timing == "5plus_before",
+         b["sub_timing5plus_before"] +
+           b["lag_price_string:sub_timing5plus_before"] *
+           cf_data$lag_price_string,
+         0)
+
+# Standard timing effects
+cf_data$seq_effect <-
+  cf_data$seq_effect +
+  ifelse(cf_data$std_timing == "1to4_before",
+         b["std_timing1to4_before"] +
+           b["lag_price_string:std_timing1to4_before"] *
+           cf_data$lag_price_string,
+         0)
+
+cf_data$seq_effect <-
+  cf_data$seq_effect +
+  ifelse(cf_data$std_timing == "5plus_before",
+         b["std_timing5plus_before"] +
+           b["lag_price_string:std_timing5plus_before"] *
+           cf_data$lag_price_string,
+         0)
+
+
+cf_data <- cf_data %>%
+  mutate(
+    ln_cf = lnEmissions_co2 - seq_effect,
+    emissions_cf = exp(ln_cf)
+  )
+
+cf_path <- cf_data %>%
+  group_by(year) %>%
+  summarise(
+    emissions = sum(emissions_cf, na.rm = TRUE),
+    emissions_gt = emissions / 1000000,
+    scenario = "Counterfactual: no sequencing",
+    .groups = "drop"
+  )
+
+actual_path <- panel_msm_weighted %>%
+  mutate(emissions = exp(lnEmissions_co2)) %>%
+  group_by(year) %>%
+  summarise(
+    emissions = sum(emissions, na.rm = TRUE),
+    emissions_gt = emissions / 1000000,
+    scenario = "Observed",
+    .groups = "drop"
+  )
+
+plot_df <- bind_rows(actual_path, cf_path)
+plot_df <- plot_df %>%
+  mutate(emissions_gt = emissions / 1000000)
+
+
+label_df <- plot_df %>%
+  group_by(scenario) %>%
+  filter(year == max(year)) %>%
+  ungroup() %>%
+  mutate(
+    label = c("Counterfactual\n(no sequencing)",
+              "Observed")
+  )
+
+ggplot(plot_df,
+       aes(year, emissions_gt, colour = scenario)) +
+  
+  geom_line(linewidth = 1.3, lineend = "round") +
+  
+  geom_point(
+    data = plot_df %>% filter(year %% 2 == 0),
+    size = 1.8
+  ) +
+  
+  geom_text(
+    data = label_df,
+    aes(label = label),
+    hjust = 0,
+    nudge_x = 0.4,
+    lineheight = 0.95,
+    fontface = "bold",
+    size = 4.3,
+    show.legend = FALSE
+  ) +
+  
+  scale_colour_manual(
+    values = c(
+      "Counterfactual: no sequencing" = "#0072B2",
+      "Observed" = "#D55E00"
+    )
+  ) +
+  
+  scale_x_continuous(
+    breaks = seq(1995, 2025, 5),
+    limits = c(1996, 2024)
+  ) +
+  
+  scale_y_continuous(
+    labels = comma,
+    expand = expansion(mult = c(0.02, 0.08))
+  ) +
+  
+  coord_cartesian(clip = "off") +
+  
+  labs(
+    x = NULL,
+    y = expression("Emissions (Gt CO"[2]*")"),
+  ) +
+  
+  theme_classic(base_size = 14) +
+  
+  theme(
+    legend.position = "none",
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 17,
+      margin = margin(b = 12)
+    ),
+    
+    axis.title.y = element_text(face = "bold"),
+    
+    axis.text = element_text(colour = "grey20"),
+    
+    axis.line = element_line(linewidth = 0.4),
+    
+    axis.ticks = element_line(linewidth = 0.4),
+    
+    panel.grid.major.y = element_line(
+      colour = "grey90",
+      linewidth = 0.35
+    ),
+    
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    plot.margin = margin(10, 70, 10, 10)
+  )
+
+
+gap_df <- actual_path %>%
+  transmute(year, observed = emissions_gt) %>%
+  full_join(
+    cf_path %>% transmute(year, counterfactual = emissions_gt),
+    by = "year"
+  ) %>%
+  arrange(year) %>%
+  mutate(
+    yearly_gap = counterfactual - observed,   # positive = emissions avoided by sequencing
+    cum_gap = cumsum(yearly_gap)
+  )
+
+# Simple cumulative difference (annual sum)
+total_cumulative_gap <- sum(gap_df$yearly_gap, na.rm = TRUE)
+
+# Area under the gap curve (numerical integration; same as sum for evenly spaced annual data)
+auc_gap <- pracma::trapz(gap_df$year, gap_df$yearly_gap)
+
+total_cumulative_gap
+auc_gap
+
+
+
 # 
 pct_effects <- 100 * (exp(coef(msm_reg_model)[grep("^pathgroup", names(coef(msm_reg_model)))]) - 1)
 pct_effects
 
 # Tables 
-var_labels <- c(
+var_labels_price <- c(
   lag_price_string = "Lagged presence of price",
-  sub_timing1to4_before = "Subsidy timing: 1–4 years before",
-  sub_timing5plus_before = "Subsidy timing: 5+ years before",
-  std_timing1to4_before = "Standard timing: 1–4 years before",
-  std_timing5plus_before = "Standard timing: 5+ years before",
+  "lag_price_string:sub_timing1to4_before" = "Price × subsidy timing: 1–4 years before",
+  "lag_price_string:sub_timing5plus_before" = "Price × subsidy timing: 5+ years before",
+  "lag_price_string:std_timing1to4_before" = "Price × standard timing: 1–4 years before",
+  "lag_price_string:std_timing5plus_before" = "Price × standard timing: 5+ years before",
   lag_numsub = "Lagged number of subsidies",
   lag_numstandard = "Lagged number of standards",
   pop = "Population",
@@ -481,17 +719,50 @@ var_labels <- c(
   urbpop = "Urban population",
   ruleoflaw = "Rule of law",
   AVservicepcGDP = "Services / GDP",
-  "lag_price_string:sub_timing1to4_before" = "Price × subsidy timing: 1–4 years before",
-  "lag_price_string:sub_timing5plus_before" = "Price × subsidy timing: 5+ years before",
-  "lag_price_string:std_timing1to4_before" = "Price × standard timing: 1–4 years before",
-  "lag_price_string:std_timing5plus_before" = "Price × standard timing: 5+ years before"
+  sub_timing1to4_before = "Subsidy timing: 1–4 years before",
+  sub_timing5plus_before = "Subsidy timing: 5+ years before",
+  std_timing1to4_before = "Standard timing: 1–4 years before",
+  std_timing5plus_before = "Standard timing: 5+ years before",
 )
 
+var_labels_taxets <- c(
+  lag_ets_string = "Lagged ETS stringency",
+  lag_tax_string = "Lagged carbon tax stringency",
+  
+  "lag_ets_string:sub_timing1to4_before" = "ETS × subsidy timing: 1–4 years before",
+  "lag_ets_string:sub_timing5plus_before" = "ETS × subsidy timing: 5+ years before",
+  "lag_ets_string:std_timing1to4_before" = "ETS × standard timing: 1–4 years before",
+  "lag_ets_string:std_timing5plus_before" = "ETS × standard timing: 5+ years before",
+  
+  "lag_tax_string:sub_timing1to4_before" = "Carbon tax × subsidy timing: 1–4 years before",
+  "lag_tax_string:sub_timing5plus_before" = "Carbon tax × subsidy timing: 5+ years before",
+  "lag_tax_string:std_timing1to4_before" = "Carbon tax × standard timing: 1–4 years before",
+  "lag_tax_string:std_timing5plus_before" = "Carbon tax × standard timing: 5+ years before",
+  
+  sub_timing1to4_before = "Subsidy timing: 1–4 years before",
+  sub_timing5plus_before = "Subsidy timing: 5+ years before",
+  std_timing1to4_before = "Standard timing: 1–4 years before",
+  std_timing5plus_before = "Standard timing: 5+ years before",
+  
+  lag_numsub = "Lagged number of subsidies",
+  lag_numstandard = "Lagged number of standards",
+  pop = "Population",
+  GDPpc2015 = "GDP per capita (2015)",
+  annual_HDD = "Annual heating degree days",
+  annual_CDD = "Annual cooling degree days",
+  tempvariation = "Temperature variation",
+  importpcGDP = "Imports / GDP",
+  urbpop = "Urban population",
+  ruleoflaw = "Rule of law",
+  AVservicepcGDP = "Services / GDP"
+)
+
+# Etable for price-only model
 etable(
   msm_model,
   msm_model_co2,
   headers = c("GHG emissions (CO₂e)", "CO₂ emissions"),
-  dict = var_labels,
+  dict = var_labels_price,
   style.tex = style.tex("aer"),
   depvar = FALSE,
   order = c(
@@ -518,7 +789,6 @@ etable(
   tex = TRUE
 )
 
-
 etable(
   list(
     "CO2" = msm_model_co2,
@@ -535,90 +805,45 @@ etable(
 )
 
 
+# Regression table distinguishing taxes from ETS 
+etable(
+  msm_model_taxets,
+  headers = "CO₂ emissions",
+  dict = var_labels_taxets,
+  style.tex = style.tex("aer"),
+  depvar = FALSE,
+  order = c(
+    "lag_ets_string",
+    "lag_tax_string",
+    
+    "lag_ets_string:sub_timing",
+    "lag_ets_string:std_timing",
+    
+    "lag_tax_string:sub_timing",
+    "lag_tax_string:std_timing",
+    
+    "sub_timing",
+    "std_timing",
+    
+    "lag_numsub",
+    "lag_numstandard",
+    
+    "pop",
+    "GDPpc2015",
+    "annual_HDD",
+    "annual_CDD",
+    "tempvariation",
+    "importpcGDP",
+    "urbpop",
+    "ruleoflaw",
+    "AVservicepcGDP"
+  ),
+  se = "cluster",
+  cluster = ~ ISO^Module,
+  fitstat = ~ n + r2,
+  tex = TRUE
+)
 
-# Predicted effects (policy counterfactual)
-actual_path <- panel_msm_weighted %>%
-  mutate(emissions = exp(lnEmissions_co2e)) %>%
-  group_by(year) %>%
-  summarise(
-    emissions = mean(emissions, na.rm = TRUE),
-    scenario = "Observed",
-    .groups = "drop"
-  )
-
-# 2) Counterfactual: no sequencing
-#    Set both timing variables to the baseline category.
-cf_data <- panel_msm_weighted %>%
-  mutate(
-    sub_timing = factor("Concurrent_or_After",
-                        levels = c("Concurrent_or_After", "1to4_before", "5plus_before")),
-    std_timing = factor("Concurrent_or_After",
-                        levels = c("Concurrent_or_After", "1to4_before", "5plus_before"))
-  )
-
-cf_data$pred_cf_log <- as.numeric(predict(msm_model, newdata = cf_data))
-cf_path <- cf_data %>%
-  mutate(emissions = exp(pred_cf_log)) %>%
-  group_by(year) %>%
-  summarise(
-    emissions = mean(emissions, na.rm = TRUE),
-    scenario = "Counterfactual: no sequencing",
-    .groups = "drop"
-  )
-
-
-
-std_eff <- avg_comparisons(
-  msm_model,
-  variables = "std_timing",
-  by = "year",
-  newdata = panel_msm_weighted
-) %>%
-  filter(term == "std_timing") %>%
-  filter(grepl("5plus_before", contrast)) %>%
-  mutate(
-    pct_est  = 100 * (exp(estimate) - 1),
-    pct_low  = 100 * (exp(conf.low) - 1),
-    pct_high = 100 * (exp(conf.high) - 1)
-  )
-
-# Publication-style plot
-p_std <- ggplot(std_eff, aes(x = year, y = pct_est)) +
-  geom_hline(yintercept = 0, linetype = "dashed", linewidth = 0.4) +
-  geom_ribbon(aes(ymin = pct_low, ymax = pct_high), alpha = 0.15) +
-  geom_line(linewidth = 1.1) +
-  labs(
-    x = "Year",
-    y = "Effect of standards introduced 5+ years before pricing on emissions (%)"
-  ) +
-  theme_classic(base_size = 11) +
-  theme(
-    axis.title = element_text(face = "bold"),
-    axis.text = element_text(colour = "black")
-  )
-
-p_std
-
-# 3) Combine for plotting
-plot_df <- bind_rows(actual_path, cf_path)
-
-
-park_palette("SmokyMountains")
-ggplot(plot_df, aes(x = year, y = emissions, color = scenario)) +
-  geom_line(linewidth = 1.2) +
-  scale_colour_manual(
-      values = park_palette("Badlands")
-  ) +
-  labs(
-    x = "Year",
-    y = "Emissions",
-    color = NULL
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    legend.position = "bottom",
-    legend.title = element_blank()
-  )
 
 
 
