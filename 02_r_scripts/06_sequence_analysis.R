@@ -143,9 +143,8 @@ make_seqobj <- function(dat_long) {
   seqdef(seq_df, alphabet = state_order_reg)
 }
 
-# ------------------------------------------------
+
 # 3) Run sequence analysis for each sector (referred to as module in the data)
-# ------------------------------------------------
 modules <- sort(unique(panel_seq$Module))
 
 results <- vector("list", length(modules))
@@ -160,15 +159,41 @@ for (m in modules) {
     filter(Module == m)
   
   # choose which state variable to analyze:
-  # use state4 for the simple 4-state analysis
-  # use state8 for the richer policy-mix analysis
-  #dat_m_seq <- prep_seq_df(dat_m, state_col = "state4")
    dat_m_seq <- prep_seq_df(dat_m, state_col = "state8reg")
-  
+   seq_m <- make_seqobj(dat_m_seq)
+   
    seq_objects[[m]] <- make_seqobj(dat_m_seq) # make data into a sequence object
    
-} 
-
+   # Most common sequences
+   seq_strings <- apply(as.data.frame(seq_m), 1, paste, collapse = " -> ")
+   top_sequences <- sort(table(seq_strings), decreasing = TRUE)
+   
+   # State transition matrix
+   transition_matrix <- seqtrate(seq_m)
+   
+   # Distance matrix for clustering
+   sm <- seqsubm(seq_m, method = "TRATE")
+   diss <- seqdist(seq_m, method = "OM", sm = sm, indel = 1)
+   
+   # Hierarchical clustering
+   hc <- hclust(as.dist(diss), method = "ward.D2")
+   clusters <- cutree(hc, k = 4)
+   
+   # Cluster sizes
+   cluster_sizes <- table(clusters)
+   
+   # Put results in a list
+   results[[m]] <- list(
+     seqobj = seq_m,
+     dat_long = dat_m_seq,
+     top_sequences = top_sequences,
+     transition_matrix = transition_matrix,
+     dist = diss,
+     hc = hc,
+     clusters = clusters,
+     cluster_sizes = cluster_sizes
+   )
+}
 
 # Figure 4.2: State Distributions
 mods <- names(seq_objects)
@@ -253,100 +278,139 @@ legend(
   cex = 1.7,
   xpd = NA
 )
-
-
-
-
-
-
-
   
-  # Descriptive plots
-  par(mfrow = c(2, 2))
-  seqdplot(seq_m, with.legend = "right", main = paste(m, "- state distribution"))
-  seqIplot(seq_m, sortv = "from.start", main = paste(m, "- index plot"))
-  seqfplot(seq_m, with.legend = "right", main = paste(m, "- sequence frequencies"))
-  seqHtplot(seq_m, with.legend = "right", main = paste(m, "- state entropy"))
-  seqmsplot(seq_m, with.legend = "right", main = paste(m, "- state entropy"))
+# Figure 4.4: Cluster graph for Electricity 
+results$Electricity$cluster_sizes
+head(results$Electricity$top_sequences, 10)
+round(results$Electricity$transition_matrix, 3)
 
-  dev.off()
-  
-  # Most common sequences
-  seq_strings <- apply(as.data.frame(seq_m), 1, paste, collapse = " -> ")
-  top_sequences <- sort(table(seq_strings), decreasing = TRUE)
-  
-  # State transition matrix
-  transition_matrix <- seqtrate(seq_m)
-  
-  # Distance matrix for clustering
-  sm <- seqsubm(seq_m, method = "TRATE")
-  diss <- seqdist(seq_m, method = "OM", sm = sm, indel = 1)
-  
-  # Hierarchical clustering
-  hc <- hclust(as.dist(diss), method = "ward.D2")
-  clusters <- cutree(hc, k = 4)
-  
-  # Save a dendrogram
-  pdf(paste0("sequence_cluster_", m, ".pdf"), width = 12, height = 8)
-  plot(hc, labels = FALSE, main = paste(m, "- sequence clustering"))
-  rect.hclust(hc, k = 4, border = 2:5)
-  dev.off()
-  
-  # Cluster sizes
-  cluster_sizes <- table(clusters)
-  
-  # Put results in a list
-  results[[m]] <- list(
-    seqobj = seq_m,
-    dat_long = dat_m_seq,
-    top_sequences = top_sequences,
-    transition_matrix = transition_matrix,
-    dist = diss,
-    hc = hc,
-    clusters = clusters,
-    cluster_sizes = cluster_sizes
-  )
-}
-
-# ------------------------------------------------
-# 4) Inspect one module, e.g. Industry
-# ------------------------------------------------
-results$Industry$cluster_sizes
-head(results$Industry$top_sequences, 10)
-round(results$Industry$transition_matrix, 3)
 
 # Attach clusters back to the original sequence data for one module
-Industry_seq <- results$Industry$seqobj
-Industry_clusters <- results$Industry$clusters
+Electricity_seq <- results$Electricity$seqobj
 
-# Plot sequences by cluster
-pdf("Industry_cluster_iplot.pdf", width = 12, height = 8)
+# Get country names back
+country_labels <- results$Electricity$dat_long |>
+  dplyr::distinct(ISO) |>
+  dplyr::pull(ISO)
 
-# Give each cluster its own page
-for (k in sort(unique(Industry_clusters))) {
-  sub_seq <- Industry_seq[Industry_clusters == k, ]
-  
-  if (nrow(sub_seq) == 0) next
-  
+length(country_labels)
+nrow(Electricity_seq)
+
+rownames(Electricity_seq) <- country_labels
+Electricity_clusters <- results$Electricity$clusters
+
+par(mar = c(4, 4, 2, 0.2), xpd = NA)
+
+cluster_names <- c(
+  "Subsidy-Led /n Developing Countries",
+  "Policy Leaders",
+  "Mixed Pathways",
+  "EU Followers"
+)
+
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+
+for (k in sort(unique(Electricity_clusters))) {
+  sub_seq <- Electricity_seq[Electricity_clusters == k, ]
+
   seqIplot(
     sub_seq,
     sortv = "from.start",
-    ylab = "ISO",
-    main = paste("Industry - Cluster", k)
+    with.legend = FALSE,
+    cex.main = 1.3,
+    cex.axis = 0.8,
+    las = 2,
+    xtstep = 4,
+    xtlab = xtlab_clean,
+    border = NA,
+    xaxis = TRUE,
+    yaxis = TRUE,
+    ylab = "",
+    ytlab = "id",
+    main = cluster_names[k]
   )
 }
 
-dev.off()
 
-seqIplot(
-  Industry_seq,
-  group = Industry_clusters,
-  sortv = "from.start",
-  ylab = "ISO",
-  main = "Industry by cluster"
+
+plot_sequence_cluster_workflow <- function(results, module, cluster_names, xtlab_clean,
+                                           outdir = ".", k = 4) {
+  stopifnot(module %in% names(results))
+  
+  # Extract objects
+  seq_obj   <- results[[module]]$seqobj
+  dat_long  <- results[[module]]$dat_long
+  clusters  <- results[[module]]$clusters
+  hc        <- results[[module]]$hc
+  
+  # Attach country labels
+  country_labels <- dat_long |>
+    dplyr::distinct(ISO) |>
+    dplyr::pull(ISO)
+  
+  stopifnot(length(country_labels) == nrow(seq_obj))
+  rownames(seq_obj) <- country_labels
+  
+  # Save dendrogram
+  pdf(file.path(outdir, paste0(module, "_cluster_dendrogram.pdf")), width = 12, height = 8)
+  plot(hc, labels = FALSE, main = paste(module, "- sequence clustering"))
+  rect.hclust(hc, k = k, border = 2:(k + 1))
+  dev.off()
+  
+  # Save one plot per cluster
+  pdf(file.path(outdir, paste0(module, "_clusters_iplot.pdf")), width = 14, height = 10)
+  par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+  
+  for (cl in sort(unique(clusters))) {
+    sub_seq <- seq_obj[clusters == cl, ]
+    
+    seqIplot(
+      sub_seq,
+      sortv = "from.start",
+      with.legend = FALSE,
+      cex.main = 1.3,
+      cex.axis = 0.8,
+      las = 2,
+      xtstep = 4,
+      xtlab = xtlab_clean,
+      border = NA,
+      xaxis = TRUE,
+      yaxis = TRUE,
+      ylab = "",
+      ytlab = "id",
+      main = cluster_names[cl]
+    )
+  }
+  
+  dev.off()
+  
+  invisible(list(
+    seqobj = seq_obj,
+    clusters = clusters,
+    country_labels = country_labels
+  ))
+}
+
+cluster_names <- c(
+  "Subsidy–Regulation-First\nDeveloping Economies",
+  "Policy Leaders",
+  "Mixed Sequences",
+  "Price-Forward\nDeveloped Economies"
+)
+
+electricity_plot <- plot_sequence_cluster_workflow(
+  results = results,
+  module = "Transport",
+  cluster_names = cluster_names,
+  xtlab_clean = xtlab_clean,
+  outdir = ".",
+  k = 4
 )
 
 
+# Dendogram 
+plot(hc, labels = FALSE, main = paste(m, "- sequence clustering"))
+rect.hclust(hc, k = 4, border = 2:5)
 
 # 5. Simple sequence plot 
 
