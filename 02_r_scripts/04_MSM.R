@@ -313,7 +313,10 @@ bal.tab(W_cp_den)
 bal.tab(W_sub_den)
 bal.tab(W_std_den)
 
-love.plot(W_std_den)
+p <- love.plot(W_std_den, thresholds = 0.1)
+p
+
+
 
 panel_msm_weighted <- panel_msm %>%
   arrange(ISO, year) %>%
@@ -326,6 +329,7 @@ panel_msm_weighted <- panel_msm %>%
 
 # Truncate / winsorize to reduce variance inflation
 q <- quantile(panel_msm_weighted$sw_cum, probs = c(0.01, 0.99), na.rm = TRUE)
+
 
 panel_msm_weighted <- panel_msm_weighted %>%
   mutate(
@@ -696,6 +700,188 @@ total_cumulative_gap
 auc_gap
 
 
+# UK Single-country counterfactual map
+uk_data <- panel_msm_weighted %>%
+  filter(ISO == "GBR")
+
+# Coefficients
+b <- coef(msm_model_co2)
+
+# Calculate sequencing effect
+uk_cf <- uk_data %>%
+  mutate(seq_effect = 0)
+
+# Subsidy timing effects
+uk_cf <- uk_cf %>%
+  mutate(
+    seq_effect = seq_effect +
+      ifelse(
+        sub_timing == "1to4_before",
+        b["sub_timing1to4_before"] +
+          b["lag_price_string:sub_timing1to4_before"] *
+          lag_price_string,
+        0
+      ),
+    
+    seq_effect = seq_effect +
+      ifelse(
+        sub_timing == "5plus_before",
+        b["sub_timing5plus_before"] +
+          b["lag_price_string:sub_timing5plus_before"] *
+          lag_price_string,
+        0
+      ),
+    
+    # Standard timing effects
+    seq_effect = seq_effect +
+      ifelse(
+        std_timing == "1to4_before",
+        b["std_timing1to4_before"] +
+          b["lag_price_string:std_timing1to4_before"] *
+          lag_price_string,
+        0
+      ),
+    
+    seq_effect = seq_effect +
+      ifelse(
+        std_timing == "5plus_before",
+        b["std_timing5plus_before"] +
+          b["lag_price_string:std_timing5plus_before"] *
+          lag_price_string,
+        0
+      )
+  )
+
+# Counterfactual emissions
+uk_cf <- uk_cf %>%
+  mutate(
+    ln_cf = lnEmissions_co2 - seq_effect,
+    emissions_cf = exp(ln_cf)
+  )
+
+# UK counterfactual path
+uk_cf_path <- uk_cf %>%
+  group_by(year) %>%
+  summarise(
+    emissions = sum(emissions_cf, na.rm = TRUE),
+    emissions_gt = emissions / 1000000,
+    scenario = "Counterfactual: no sequencing",
+    .groups = "drop"
+  )
+
+# UK observed path
+uk_actual_path <- uk_data %>%
+  mutate(emissions = exp(lnEmissions_co2)) %>%
+  group_by(year) %>%
+  summarise(
+    emissions = sum(emissions, na.rm = TRUE),
+    emissions_gt = emissions / 1000000,
+    scenario = "Observed",
+    .groups = "drop"
+  )
+
+# Combine
+uk_plot_df <- bind_rows(
+  uk_actual_path,
+  uk_cf_path
+)
+
+# Labels at final year
+uk_label_df <- uk_plot_df %>%
+  group_by(scenario) %>%
+  filter(year == max(year)) %>%
+  ungroup() %>%
+  mutate(
+    label = ifelse(
+      scenario == "Counterfactual: no sequencing",
+      "Counterfactual\n(no sequencing)",
+      "Observed"
+    )
+  )
+
+# Plot
+ggplot(
+  uk_plot_df,
+  aes(year, emissions_gt, colour = scenario)
+) +
+  
+  geom_line(
+    linewidth = 1.3,
+    lineend = "round"
+  ) +
+  
+  geom_point(
+    data = uk_plot_df %>% filter(year %% 2 == 0),
+    size = 1.8
+  ) +
+  
+  geom_text(
+    data = uk_label_df,
+    aes(label = label),
+    hjust = 0,
+    nudge_x = 0.4,
+    lineheight = 0.95,
+    fontface = "bold",
+    size = 4.3,
+    show.legend = FALSE
+  ) +
+  
+  scale_colour_manual(
+    values = c(
+      "Counterfactual: no sequencing" = "#0072B2",
+      "Observed" = "#D55E00"
+    )
+  ) +
+  
+  scale_x_continuous(
+    breaks = seq(1995, 2025, 5),
+    limits = c(1996, 2024)
+  ) +
+  
+  scale_y_continuous(
+    labels = scales::comma,
+    expand = expansion(mult = c(0.02, 0.08))
+  ) +
+  
+  coord_cartesian(clip = "off") +
+  
+  labs(
+    title = "UK CO₂ emissions: sequencing counterfactual",
+    x = NULL,
+    y = expression("Emissions (Gt CO"[2]*")")
+  ) +
+  
+  theme_classic(base_size = 14) +
+  
+  theme(
+    legend.position = "none",
+    
+    plot.title = element_text(
+      face = "bold",
+      size = 17,
+      margin = margin(b = 12)
+    ),
+    
+    axis.title.y = element_text(face = "bold"),
+    
+    axis.text = element_text(colour = "grey20"),
+    
+    axis.line = element_line(linewidth = 0.4),
+    
+    axis.ticks = element_line(linewidth = 0.4),
+    
+    panel.grid.major.y = element_line(
+      colour = "grey90",
+      linewidth = 0.35
+    ),
+    
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor = element_blank(),
+    
+    plot.margin = margin(10, 70, 10, 10)
+  )
+
+
 
 # 
 pct_effects <- 100 * (exp(coef(msm_reg_model)[grep("^pathgroup", names(coef(msm_reg_model)))]) - 1)
@@ -846,57 +1032,8 @@ etable(
 
 
 
-
-# Robustness Checks -------------------------------------------------------
-
-# Do robustness checks here
-
-
-
-# Figures -----------------------------------------------------------------
-# Fig 4a
-groupings <- read_csv("01_tidy_data/CountryGroupings.csv")
-
-plot_panel <- panel_data %>%
-  group_by(Classification, Module, ISO) %>%
-  mutate(first_adopt = min(if_else(state != "none", year, NA_integer_), na.rm = TRUE)) %>%
-  ungroup() %>%
-  mutate(
-    first_adopt = if_else(is.infinite(first_adopt), NA_real_, first_adopt),
-    state = factor(state, levels = c("none", "reg", "price", "both"))
-  )
-
-
-ggplot(plot_panel, aes(x = year, y = ISO, fill = state)) +
-  geom_tile() +
-  facet_grid(Classification ~ Module, scales = "free_y", space = "free_y") +
-  scale_fill_manual(
-    values = c(
-      "none" = "white",
-      "reg" = "steelblue3",
-      "price" = "darkorange2",
-      "both" = "darkgreen"
-    )
-  ) +
-  labs(
-    x = "Year",
-    y = "Country (ISO)",
-    fill = "Policy state",
-    title = "Policy adoption paths by country, sector, and development group"
-  ) +
-  theme_minimal() +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.y = element_text(size = 6),
-    strip.text = element_text(face = "bold")
-  )
-
-
-# Old code 
-
-
-
-# Build policy-level panel
+ 
+# Old code of policy-lvel panels
 panel <- oecd_data %>%
   mutate(
     id = interaction(ISO, Module, Policy, drop = TRUE)
@@ -1025,60 +1162,4 @@ panel_sectors <- panel %>%
   ) %>%
   ungroup()
 
-
-
-# Weighting (No country fixed effects) ---------------------------------------------------------------
-
-# Weighting path 
-baseline <- panel_data |>
-  group_by(ISO, Module) |>
-  filter(year == min(year[priceintro == 1 | regintro == 1])) |>
-  filter(pathgroup != "simultaneous") %>%
-  filter(pathgroup != "price_only") %>%
-  ungroup() 
-
-library(WeightIt)
-
-W <- weightit(
-  pathgroup ~ pop + GDPpc2015 +
-    annual_HDD + annual_CDD + ruleoflaw +
-    importpcGDP + tempvariation + urbpop,
-  data = baseline,
-  method = "glm",
-  estimand = "ATE"
-)
-
-bal.tab(W)
-summary(W)
-love.plot(W)
-
-# Model -------------------------------------------------------------------
-
-#H1: Static path / group model
-panel_data <- panel_data |>
-  left_join(
-    baseline |>
-      mutate(ipw = get.w(W)) |>
-      select(ISO, Module, ipw),
-    by = c("ISO", "Module")
-  )
-
-# Specify controls 
-controls <- ~ pop + GDPpc2015 + annual_HDD + annual_CDD  + ruleoflaw +tempvariation + urbpop + importpcGDP
-
-# Model with interaction term, no effects
-fml2 <- xpd(
-  lnEmissions_co2 ~  pathgroup + lag_numprice + lag_numreg + lag_price_string + lag_reg_string + ..controls | Module + year,
-  ..controls = controls
-)
-
-
-model <- feols(
-  fml2,
-  cluster = ~ISO,
-  data = panel_data, 
-  weights = ~ ipw
-)
-
-summary(model)
 

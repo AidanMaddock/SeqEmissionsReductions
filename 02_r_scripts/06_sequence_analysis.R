@@ -11,7 +11,7 @@ library(scales)
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 06_sequence_analysis.r
-# Description: This script categorises policy 
+# Description: This script categorises the policy into sequences
 # Inputs: policypanel_long.csv
 # Outputs: No csvs. Lots of plots
 #=========================================================
@@ -103,6 +103,17 @@ state_order_reg <- c(
   "all_three"
 )
 
+state_colors_reg <- c(
+  none            = "#F9F9F9",
+  price           = "#3978B5",
+  subsidy         = "#E6A04B",
+  reg             = "#D95555",
+  price_subsidy   = "#559B91",
+  price_reg       = "#8D5C9E",
+  subsidy_reg     = "#C87545",
+  all_three       = "#625C68"
+)
+
 # Helper that summarises long policy panel into country-module-year-state panel
 prep_seq_df <- function(dat, state_col = "state8reg") {
   year_grid <- seq(min(dat$year, na.rm = TRUE), max(dat$year, na.rm = TRUE), by = 1)
@@ -123,14 +134,6 @@ make_seqobj <- function(dat_long) {
     mutate(year = paste0("y", year)) %>%
     pivot_wider(names_from = year, values_from = state)
   
-  #seq_mat <- wide %>%
-    #select(starts_with("y"))
-  
-  #rownames(seq_mat) <- wide$ISO
-  #rownames(seq_mat) <- paste(wide$ISO, wide$Module, sep = "_")
-  
-  #seqdef(seq_mat)
-  
   seq_df <- wide %>%
     select(starts_with("y")) %>%
     as.data.frame()
@@ -140,7 +143,7 @@ make_seqobj <- function(dat_long) {
   
   
   head(rownames(seq_df))
-  seqdef(seq_df, alphabet = state_order_reg)
+  seqdef(seq_df, alphabet = state_order_reg, cpal = unname(state_colors_reg))
 }
 
 
@@ -226,6 +229,17 @@ for (i in seq_along(mods)) {
   )
 }
 
+legend_labels <- c(
+  "None",
+  "Price",
+  "Subsidy",
+  "Regulation",
+  "Price + Subsidy",
+  "Price + Regulation",
+  "Subsidy + Regulation",
+  "All Three"
+)
+
 # legend panel on the right
 par(mar = c(0, 0, 0, 0))
 par(family = "Times-Roman")
@@ -233,12 +247,64 @@ plot.new()
 legend(
   "center",
   title = "Policy State",
-  legend = alphabet(seq_objects[[mods[1]]]),
+  legend = legend_labels,
   fill = attr(seq_objects[[mods[1]]], "cpal"),
   bty = "n",
   cex = 1.7,
   xpd = NA
 )
+
+# legend panel below figure, horizontal
+par(mfrow = c(1, 1))
+par(mar = c(0, 0, 0, 0))
+par(family = "Times-Roman")
+plot.new()
+
+legend(
+  "center",
+  legend = legend_labels,
+  fill = attr(seq_objects[[mods[1]]], "cpal"),
+  bty = "n",
+  cex = 1.2,
+  ncol = 4,
+  xpd = NA,
+  x.intersp = 0.8,
+  text.width = 0.17,   # controls column width
+  y.intersp = 1.2
+)
+
+
+par(mfrow = c(1, 1))
+par(mar = c(0, 0, 0, 0))
+par(family = "Times-Roman")
+
+plot.new()
+
+# Use the same width for all four columns
+col_width <- max(
+  strwidth(
+    legend_labels,
+    units = "user",
+    cex = 1.1,
+    family = "Times-Roman"
+  )
+)
+
+legend(
+  "center",
+  title = "Policy State",
+  legend = legend_labels,
+  fill = attr(seq_objects[[mods[1]]], "cpal"),
+  bty = "n",
+  cex = 1.3,
+  ncol = 4,
+  xpd = NA,
+  x.intersp = 0.8,
+  text.width = col_width,
+  y.intersp = 1.2
+)
+
+
 
 
 # Figure 4.4: Sequence Frequencies 
@@ -279,6 +345,7 @@ legend(
   xpd = NA
 )
   
+
 # Figure 4.4: Cluster graph for Electricity 
 results$Electricity$cluster_sizes
 head(results$Electricity$top_sequences, 10)
@@ -302,10 +369,10 @@ Electricity_clusters <- results$Electricity$clusters
 par(mar = c(4, 4, 2, 0.2), xpd = NA)
 
 cluster_names <- c(
-  "Subsidy-Led /n Developing Countries",
-  "Policy Leaders",
-  "Mixed Pathways",
-  "EU Followers"
+  "1: Subsidy-Led Developing Countries",
+  "2: Policy Leaders",
+  "3: Mixed Pathways",
+  "4: EU Followers"
 )
 
 par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
@@ -332,37 +399,40 @@ for (k in sort(unique(Electricity_clusters))) {
 }
 
 
-
-plot_sequence_cluster_workflow <- function(results, module, cluster_names, xtlab_clean,
-                                           outdir = ".", k = 4) {
-  stopifnot(module %in% names(results))
+plot_module_clusters <- function(module_name, cluster_names = NULL) {
   
-  # Extract objects
-  seq_obj   <- results[[module]]$seqobj
-  dat_long  <- results[[module]]$dat_long
-  clusters  <- results[[module]]$clusters
-  hc        <- results[[module]]$hc
+  # Get sequence object and clusters
+  seq_obj <- results[[module_name]]$seqobj
+  clusters <- results[[module_name]]$clusters
   
-  # Attach country labels
-  country_labels <- dat_long |>
+  # Get country names
+  country_labels <- results[[module_name]]$dat_long |>
     dplyr::distinct(ISO) |>
     dplyr::pull(ISO)
   
-  stopifnot(length(country_labels) == nrow(seq_obj))
+  # Attach country labels
   rownames(seq_obj) <- country_labels
   
-  # Save dendrogram
-  pdf(file.path(outdir, paste0(module, "_cluster_dendrogram.pdf")), width = 12, height = 8)
-  plot(hc, labels = FALSE, main = paste(module, "- sequence clustering"))
-  rect.hclust(hc, k = k, border = 2:(k + 1))
-  dev.off()
+  # Default cluster names
+  if (is.null(cluster_names)) {
+    cluster_names <- paste("Cluster", sort(unique(clusters)))
+  }
   
-  # Save one plot per cluster
-  pdf(file.path(outdir, paste0(module, "_clusters_iplot.pdf")), width = 14, height = 10)
-  par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+  # Common x-axis labels
+  xtlab_clean <- gsub("^y", "", colnames(as.data.frame(seq_obj)))
   
-  for (cl in sort(unique(clusters))) {
-    sub_seq <- seq_obj[clusters == cl, ]
+  # Set up 2 x 2 layout
+  par(
+    mfrow = c(2, 2),
+    mar = c(4, 4, 3, 1),
+    xpd = NA,
+    family = "Times-Roman"
+  )
+  
+  # Plot each cluster
+  for (k in sort(unique(clusters))) {
+    
+    sub_seq <- seq_obj[clusters == k, ]
     
     seqIplot(
       sub_seq,
@@ -378,18 +448,17 @@ plot_sequence_cluster_workflow <- function(results, module, cluster_names, xtlab
       yaxis = TRUE,
       ylab = "",
       ytlab = "id",
-      main = cluster_names[cl]
+      main = cluster_names[k]
     )
   }
-  
-  dev.off()
-  
-  invisible(list(
-    seqobj = seq_obj,
-    clusters = clusters,
-    country_labels = country_labels
-  ))
 }
+
+plot_module_clusters("Buildings")
+
+plot_module_clusters("Industry")
+
+# Transport
+plot_module_clusters("Transport")
 
 cluster_names <- c(
   "Subsidy–Regulation-First\nDeveloping Economies",
@@ -412,7 +481,7 @@ electricity_plot <- plot_sequence_cluster_workflow(
 plot(hc, labels = FALSE, main = paste(m, "- sequence clustering"))
 rect.hclust(hc, k = 4, border = 2:5)
 
-# 5. Simple sequence plot 
+# 5. Simple sequence plot (Fig 4.1)
 
 shape_map <- c(
   "Technology Standards" = 16,
@@ -999,188 +1068,3 @@ p_pre_bld <- plot_pre_carbon_pricing_network(panel_seq, "Buildings", state_var =
   plot_layout(guides = "collect") &
   theme(legend.position = "right")
 
-
-# Policy event-time heatmap
-
-library(forcats)
-
-window <- 15
-
-
-heat_df <- panel_seq %>%
-  filter(!is.na(first_price_year), introduction == 1) %>%
-  filter(`Broad Category` != "Taxation") %>%
-  filter(`Broad Category` != "Driving taxation") %>%
-  mutate(event_year = year - first_price_year) %>%
-  filter(event_year <= 0) %>%
-  mutate(
-    period = case_when(
-      event_year <= -10 ~ "10+ years before",
-      event_year <= -5  ~ "5-10 years before",
-      event_year <= -1  ~ "1-4 years before",
-      event_year == 0   ~ "Carbon pricing year"
-    ),
-    period = factor(
-      period,
-      levels = c(
-        "10+ years before",
-        "5-10 years before",
-        "1-4 years before",
-        "Carbon pricing year"
-      )
-    )
-  ) %>%
-  count(`Broad Category`, period, name = "n")
-
-ggplot(heat_df, aes(x = period, y = fct_reorder(`Broad Category`, n, .fun = sum), fill = n)) +
-  geom_tile(color = "white", linewidth = 0.2) +
-  labs(
-    x = NULL,
-    y = NULL,
-    fill = "Introductions"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(angle = 0, vjust = 0.5)
-  )
-
-
-
-heat_df <- panel_seq %>%
-  filter(!is.na(first_price_year), introduction == 1) %>%
-  filter(`Broad Category` != "Taxation") %>%
-  filter(`Broad Category` != "Driving taxation") %>%
-  mutate(event_year = year - first_price_year) %>%
-  filter(event_year <= 0) %>%
-  mutate(
-    period = case_when(
-      event_year <= -10 ~ "10+ years before",
-      event_year <= -5  ~ "5-10 years before",
-      event_year <= -1  ~ "1-4 years before",
-      event_year == 0   ~ "Carbon pricing year"
-    ),
-    period = factor(
-      period,
-      levels = c(
-        "10+ years before",
-        "5-10 years before",
-        "1-4 years before",
-        "Carbon pricing year"
-      )
-    ),
-    # numeric score for ordering rows by timing
-    period_score = case_when(
-      period == "10+ years before" ~ 3,
-      period == "5-10 years before" ~ 2,
-      period == "1-4 years before" ~ 1,
-      period == "Carbon pricing year" ~ 0
-    )
-  ) %>%
-  count(Module,`Broad Category`, period, period_score, name = "n") %>%
-  group_by(Module, `Broad Category`) %>%
-  mutate(share = n / sum(n)) %>%
-  ungroup()
-
-policy_order <- heat_df %>%
-  group_by(`Broad Category`) %>%
-  summarise(
-    avg_timing = weighted.mean(period_score, share),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(avg_timing)) %>%
-  pull(`Broad Category`)
-
-heat_df <- heat_df %>%
-  mutate(`Broad Category` = factor(`Broad Category`, levels = policy_order))
-
-
-ggplot(heat_df, aes(x = period, y = `Broad Category`, fill = share)) +
-  geom_tile(color = "white", linewidth = 0.2) +
-  facet_wrap(~Module, ncol = 2) +
-  scale_fill_viridis_c(
-    option = "C",
-    name = "Share",
-    labels = scales::percent_format(accuracy = 1)
-  ) +
-  labs(
-    x = NULL,
-    y = NULL,
-    title = "Policy introductions before carbon pricing"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid = element_blank(),
-    axis.text.x = element_text(size = 11),
-    axis.text.y = element_text(size = 11)
-  )
-
-
-
-# Policy transition heatmap
-
-plot_policy_transition_heatmap <- function(panel, module_name, policy_var = "Policy") {
-  library(dplyr)
-  library(tidyr)
-  library(ggplot2)
-  library(forcats)
-  
-  panel_module <- panel %>%
-    filter(Module == module_name) %>%
-    mutate(
-      intro = as.integer(introduction == 1)
-    ) %>%
-    arrange(ISO, year)
-  
-  # Keep only actual policy introductions, and only before carbon pricing
-  pre_df <- panel_module %>%
-    filter(intro == 1, !is.na(first_price_year), year < first_price_year) %>%
-    select(ISO, year, policy = all_of(policy_var)) %>%
-    arrange(ISO, year, policy)
-  
-  # Transitions between successive policy introductions
-  trans <- pre_df %>%
-    group_by(ISO) %>%
-    mutate(next_policy = lead(policy)) %>%
-    ungroup() %>%
-    filter(!is.na(next_policy), policy != next_policy) %>%
-    count(from = policy, to = next_policy, name = "n") %>%
-    group_by(from) %>%
-    mutate(prob = n / sum(n)) %>%
-    ungroup()
-  
-  # Order policies by total involvement in transitions
-  policy_order <- trans %>%
-    select(from, to, n) %>%
-    pivot_longer(c(from, to), values_to = "policy") %>%
-    count(policy, wt = n, sort = TRUE) %>%
-    pull(policy)
-  
-  trans <- trans %>%
-    mutate(
-      from = factor(from, levels = rev(policy_order)),
-      to   = factor(to, levels = policy_order)
-    )
-  
-  ggplot(trans, aes(x = to, y = from, fill = prob)) +
-    geom_tile(color = "white", linewidth = 0.2) +
-    geom_text(
-      aes(label = ifelse(prob >= 0.05, sprintf("%.2f", prob), "")),
-      size = 3
-    ) +
-    scale_fill_gradient(low = "grey95", high = "#2C7BB6", name = "Probability") +
-    labs(
-      title = paste0("Pre-pricing policy transitions: ", module_name),
-      subtitle = "Rows show the previous policy introduction; columns show the next policy introduction",
-      x = "Next policy introduced",
-      y = "Previous policy introduced"
-    ) +
-    theme_minimal(base_size = 12) +
-    theme(
-      panel.grid = element_blank(),
-      axis.text.x = element_text(angle = 45, hjust = 1),
-      plot.title = element_text(face = "bold")
-    )
-}
-
-plot_policy_transition_heatmap(panel_seq, "Transport", policy_var = "Policy_new")

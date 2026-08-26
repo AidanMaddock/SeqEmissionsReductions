@@ -1,4 +1,4 @@
-library(readr)
+`library(readr)
 library(dplyr)
 library(ggplot2)
 library(sf)
@@ -54,13 +54,13 @@ ggplot(world) +
   scale_fill_manual(
     name = NULL,
     values = c(
-      "Included" = "#006400",
+      "Included" = "#005800",
       "Not Present" = "white"
     )
   ) +
   scale_color_manual(
     name = NULL,
-    values = c("Developing Country" = "#8B1E0F")
+    values = c("Developing Country" = "#9B1E0F")
   ) +
   guides(
     fill = guide_legend(
@@ -78,4 +78,4 @@ ggplot(world) +
     panel.grid = element_blank(),
     panel.border = element_blank(),
     legend.position = "bottom"
-  ) 
+  ) `
