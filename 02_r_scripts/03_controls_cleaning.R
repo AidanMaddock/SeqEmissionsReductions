@@ -13,6 +13,7 @@ source("02_r_scripts/00_project_functions.R")
 # Outputs: controls.csv 
 #=========================================================
 
+
 # Load in 16 degree baseline HDD and 18 degree CDD
 hdd <- read_csv("00_raw_data/controls/IEA_CMCC_HDD16monthlyworldbypopallmonths.csv", skip = 9) 
 cdd <- read_csv("00_raw_data/controls/IEA_CMCC_CDD18monthlyworldbypopallmonths.csv", skip = 9)
@@ -214,11 +215,3 @@ controls <- wb_econ_hp %>%
   left_join(temp_var, by = c("ISO","year"))
 
 write_csv(controls, "01_tidy_data/controls.csv")
-
-# Plot GDP cyclicality as a proof of concept 
-plot(wbgdp$GDPpc2015, type="l", col="black", lty=1)
-lines(ytrend$GDPpc2015, col="#066462")
-polygon(c(1, seq(ycycle$GDPpc2015), length(ycycle$GDPpc2015)),
-        c(0, ycycle$GDPpc2015, 0), col = "#E0F2F1")
-legend("bottom", horiz=TRUE, cex=0.75, c("y", "ytrend",
-                                         "ycycle"), lty = 1, col = c("black", "#066462", "#75bfbd"))

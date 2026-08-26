@@ -11,10 +11,6 @@ library(WeightIt)
 library(scales)
 library(pracma)
 
-
-devtools::install_github("katiejolly/nationalparkcolors")
-library(nationalparkcolors)
-
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 04_MSM.r
@@ -25,8 +21,7 @@ library(nationalparkcolors)
 # Outputs: joined_data.csv
 #=========================================================
 
-
-# 1. Policy panel building
+# 1: Policy Panel Building ------------------------------------------------
 
 # Load in policy data
 oecd_data <- read_csv("01_tidy_data/policies.csv")
@@ -183,12 +178,11 @@ panel_data <- panel_sectors %>%
 write_csv(panel,"00_raw_data/joined_data.csv") # Used in 05_matrix.R 
 
 
-# Weighting (time-varying) -------------------------------------------------------------------------
+# 2: Inverse Probability of Treatment Weighting  -------------------------------------------------------------------------
 lag_vars <- c(
   "GDPpc2015", "annual_HDD", "annual_CDD", "ruleoflaw",
   "importpcGDP", "tempvariation", "urbpop", "price", "subsidy", "standard"
 )
-
 
 bin_timing <- function(x) {
   cut(
@@ -232,12 +226,10 @@ panel_msm <- panel_data %>%
   ) %>%
   ungroup()
 
-
-#------------------------------------------------------------
 # 2) Helper: stabilized IPTW component for one policy process
 #    WeightIt gives inverse-probability weights; ratio of
 #    numerator- to denominator-weights is the stabilized factor.
-#------------------------------------------------------------
+
 fit_sw_component <- function(dat, treat, num_rhs, den_rhs, prefix) {
   f_num <- as.formula(paste(treat, "~", paste(num_rhs, collapse = " + ")))
   f_den <- as.formula(paste(treat, "~", paste(den_rhs, collapse = " + ")))
@@ -263,12 +255,10 @@ fit_sw_component <- function(dat, treat, num_rhs, den_rhs, prefix) {
   dat
 }
 
-#------------------------------------------------------------
 # 3) Treatment models
 #    Denominator: full lagged confounder history + lagged other policies
 #    Numerator: weakly stabilized model (year + own lag)
-#    If you have true baseline covariates, add them to num_rhs.
-#------------------------------------------------------------
+
 den_covars <- c(
   "factor(year)",
   "lag_GDPpc2015", "lag_annual_HDD", "lag_annual_CDD",
@@ -277,7 +267,6 @@ den_covars <- c(
 )
 
 # Weak stabilization fallback.
-# Replace/augment with baseline covariates if you have them.
 num_price_covars    <- c("factor(year)", "lag_price")
 num_subsidy_covars  <- c("factor(year)", "lag_subsidy")
 num_standard_covars <- c("factor(year)", "lag_standard")
@@ -302,6 +291,7 @@ panel_msm <- panel_msm %>%
     prefix  = "std"
   ) 
 
+# Combine weights together (assuming conditional independence)
 W_cp_den <- weightit(as.formula(paste("price ~", paste(den_covars, collapse = " + "))),
                      data = panel_msm, method = "glm", estimand = "ATE")
 W_sub_den <- weightit(as.formula(paste("subsidy ~", paste(den_covars, collapse = " + "))),
@@ -315,7 +305,6 @@ bal.tab(W_std_den)
 
 p <- love.plot(W_std_den, thresholds = 0.1)
 p
-
 
 
 panel_msm_weighted <- panel_msm %>%
@@ -338,14 +327,9 @@ panel_msm_weighted <- panel_msm_weighted %>%
 
 summary(panel_msm_weighted$sw)
 
+# 3: Policy Sequencing Score Calculation -------------------------------------------------------------------------
 
-#Look at excluding israel?
-
-
-
-# -------------------------------------------------------------------------
-
-# Policy Sequencing Score Calculation
+# 
 # First year of adoption for all policies
 adopt_years <- panel %>%
   group_by(ISO, Module, Policy) %>%
@@ -406,13 +390,11 @@ build_pair_lookup_df <- function(adopt_years, policy_cols) {
 pair_lookup_df <- build_pair_lookup_df(adopt_years, policy_cols)
 pair_lookup <- setNames(pair_lookup_df$freq, pair_lookup_df$key)
 
-#------------------------------------------------------------
 # 3) Score one unit-year
 #    - find policies adopted by year t
 #    - determine their observed ordering
 #    - look up frequencies
 #    - sum them
-#------------------------------------------------------------
 score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
   ad_years <- ad_years[policy_cols]
   
@@ -442,9 +424,8 @@ score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
   sum(pair_scores, na.rm = TRUE)
 }
 
-#------------------------------------------------------------
 # 4) Attach the score to each ISO x Module x year
-#------------------------------------------------------------
+
 unit_year_panel <- panel %>%
   distinct(ISO, Module, year)
 
@@ -468,7 +449,7 @@ panel_scored <- unit_year_panel %>%
 
 
 
-# Models ------------------------------------------------------------------
+# 4: Models ------------------------------------------------------------------
 
 
 # Model for co2 only
@@ -522,7 +503,9 @@ msm_reg_model <- feols(
 summary(msm_reg_model)
 
 
-# Sequencing counterfactual plotting
+
+
+# 5: Sequencing Counterfactuals ----------------------------------------------
 b <- coef(msm_model_co2)
 
 cf_data <- panel_msm_weighted %>%
@@ -882,12 +865,7 @@ ggplot(
   )
 
 
-
-# 
-pct_effects <- 100 * (exp(coef(msm_reg_model)[grep("^pathgroup", names(coef(msm_reg_model)))]) - 1)
-pct_effects
-
-# Tables 
+# 6: Regression Tables -------------------------------------------------------
 var_labels_price <- c(
   lag_price_string = "Lagged presence of price",
   "lag_price_string:sub_timing1to4_before" = "Price × subsidy timing: 1–4 years before",
@@ -1032,8 +1010,8 @@ etable(
 
 
 
- 
-# Old code of policy-lvel panels
+
+# 7: Old code of policy-level panels -----------------------------------------
 panel <- oecd_data %>%
   mutate(
     id = interaction(ISO, Module, Policy, drop = TRUE)

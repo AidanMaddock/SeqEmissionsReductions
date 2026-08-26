@@ -11,8 +11,7 @@ library(readr)
 #=========================================================
 
 
-# Variable Mapping --------------------------------------------------------
-
+# 1. Variable Mapping --------------------------------------------------------
 
 # Load in raw OECD data
 oecd_data <- read_csv("00_raw_data/policies/OECD_CAMPF_Aggregated.csv")
@@ -228,79 +227,6 @@ stringency_per_year <- oecd_grouped %>%
   group_by(year) %>%
   summarise(Value = mean(Value, na.rm = TRUE))
 
-
-# Save outputs for regression
+# Save outputs for use in 04_MSM.R
 write.csv(oecd_grouped, "01_tidy_data/policies.csv")
-
-# Graphing ----------------------------------------------------------------
-intro_plot_data <- oecd_grouped %>%
-  filter(introduction == 1) %>%
-  mutate(
-    year = as.integer(year),
-    ISO = factor(ISO)
-  ) %>%
-  mutate(ISO = factor(ISO, levels = rev(sort(unique(ISO)))))
-
-ggplot(intro_plot_data, aes(x = year, y = ISO, fill = Policytype_detail_new)) +
-  geom_tile(height = 0.8, width = 0.9, colour = "white") +
-  facet_wrap(~ Module, ncol = 2) +
-  labs(
-    x = "Year",
-    y = "Country",
-    fill = "Policy Type",
-    title = "Policy Introductions by Country"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.y = element_text(size = 8)
-  )
-
-
-policy_per_year <- oecd_grouped %>%
-  group_by(year,Module) %>%
-  summarise(
-    introductions = sum(introduction, na.rm = TRUE),
-    intensifications = sum(intensification, na.rm = TRUE)
-  )
-
-policy_long <- policy_per_year %>%
-  pivot_longer(
-    cols = c(introductions, intensifications),
-    names_to = "policy_type",
-    values_to = "count"
-  )
-
-
-ggplot(policy_long,
-       aes(x = factor(year),
-           y = count,
-           fill = policy_type)) +
-  geom_col() +
-  facet_wrap(~ Module, ncol = 2) +
-  labs(
-    title = "Policy Changes per Year",
-    x = "Year",
-    y = "Count",
-    fill = "Policy Type"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
-
-
-# Line graph stringency
-ggplot(stringency_per_year,
-       aes(x = year, y = Value)) +
-  geom_line() +
-  scale_y_continuous(limits = c(0, 10)) +
-  labs(
-    title = "Stringency Evolution",
-    x = "Year",
-    y = "Average Stringency"
-  ) +
-  theme_minimal() +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1)
-  )
 

@@ -5,15 +5,8 @@ library(pheatmap)
 library(fixest)
 library(ggplot2)
 
-
-
-
-# panel:
-# country | year | policy | adopted
-# adopted should be 0/1 (or anything >0 meaning present)
 # One row per country-year-policy observation
 df <- read.csv("00_raw_data/joined_data.csv")
-
 
 build_relatedness <- function(df,
                               country_col = "ISO",
@@ -188,19 +181,4 @@ phi <- res$relatedness
 
 readiness_df <- compute_readiness(df, phi)
 
-
-# Regression
-
-
-panel2 <- panel_data %>%
-  left_join(readiness_df, by = c("ISO"))
-
-m1 <- feols(
-  lnEmissions_co2 ~ lag_numprice * readiness + lag_price_string + lag_reg_string  + pop + GDPpc2015 + annual_HDD + annual_CDD +
-    GDPpc2015_cycle + tempvariation + regquality + ruleoflaw + importpcGDP + GDPgrowth + AVservicepcGDP | ISO^Module + year,
-  cluster = ~ISO^Module,
-  data = panel2
-)
-
-summary(m1)
 
