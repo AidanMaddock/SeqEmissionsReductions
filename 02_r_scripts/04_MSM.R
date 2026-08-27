@@ -10,6 +10,7 @@ library(marginaleffects)
 library(WeightIt)
 library(scales)
 library(pracma)
+library(performance)
 
 #=========================================================
 # Project: Climate Policy Sequencing
@@ -619,6 +620,13 @@ msm_reg_model <- feols(
 summary(msm_reg_model)
 
 
+# Regression diagnostics
+
+
+
+check_collinearity(msm_model_co2)
+
+
 # 5: Sequencing Counterfactuals ----------------------------------------------
 b <- coef(msm_model_co2)
 
@@ -1122,8 +1130,7 @@ etable(
   tex = TRUE
 )
 
-# Table for robustness 
-
+# Etable: robustness checks 
 models_co2_robust <- list(
   "Baseline"            = msm_model_co2,
   "No weights"          = msm_model_co2_noweights,
@@ -1136,6 +1143,94 @@ models_co2_robust <- list(
   "Economic controls"   = msm_model_co2_econ,
   "Weather controls"    = msm_model_co2_weather,
   "Full controls"       = msm_model_co2_inst
+)
+
+check <- function(x) {
+  ifelse(x, "$\\checkmark$", "")
+}
+etable(
+  models_co2_robust,
+  
+  keep = "^(lag_price_string|lag_price_string2years|lag_price_string3years)",
+  
+  extralines = list(
+    "ISO fixed effects" = rep("$\\checkmark$", 11),
+    "Year fixed effects" = rep("$\\checkmark$", 11),
+    
+    "Sector fixed effects" = check(c(
+      FALSE,  # Baseline
+      FALSE,  # No weights
+      TRUE,   # Sector FE
+      FALSE,  # 4-year
+      FALSE,  # 6-year
+      FALSE,  # 2-year lag
+      FALSE,  # 3-year lag
+      FALSE,  # No controls
+      FALSE,  # Economic
+      FALSE,  # Weather
+      FALSE   # Full
+    )),
+    
+    "Weights" = check(c(
+      TRUE,   # Baseline
+      FALSE,  # No weights
+      TRUE,   # Sector FE
+      TRUE,   # 4-year
+      TRUE,   # 6-year
+      TRUE,   # 2-year lag
+      TRUE,   # 3-year lag
+      TRUE,   # No controls
+      TRUE,   # Economic
+      TRUE,   # Weather
+      TRUE    # Full
+    )),
+    
+    "Economic controls" = check(c(
+      TRUE,   # Baseline
+      TRUE,   # No weights
+      TRUE,   # Sector FE
+      TRUE,   # 4-year
+      TRUE,   # 6-year
+      TRUE,   # 2-year lag
+      TRUE,   # 3-year lag
+      FALSE,  # No controls
+      TRUE,   # Economic
+      TRUE,   # Weather
+      TRUE    # Full
+    )),
+    
+    "Weather controls" = check(c(
+      TRUE,   # Baseline
+      TRUE,   # No weights
+      TRUE,   # Sector FE
+      TRUE,   # 4-year
+      TRUE,   # 6-year
+      TRUE,   # 2-year lag
+      TRUE,   # 3-year lag
+      FALSE,  # No controls
+      FALSE,  # Economic
+      TRUE,   # Weather
+      TRUE    # Full
+    )),
+    
+    "Institutional controls" = check(c(
+      TRUE,   # Baseline
+      TRUE,   # No weights
+      TRUE,   # Sector FE
+      TRUE,   # 4-year
+      TRUE,   # 6-year
+      TRUE,   # 2-year lag
+      TRUE,   # 3-year lag
+      FALSE,  # No controls
+      FALSE,  # Economic
+      FALSE,  # Weather
+      TRUE    # Full
+    ))
+  ),
+  
+  fitstat = ~ n + r2,
+  
+  tex = TRUE
 )
 
 
