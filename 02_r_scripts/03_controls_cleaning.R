@@ -14,6 +14,9 @@ source("02_r_scripts/00_project_functions.R")
 #=========================================================
 
 
+# 1. Control Variable cleaning --------------------------------------------
+
+
 # Load in 16 degree baseline HDD and 18 degree CDD
 hdd <- read_csv("00_raw_data/controls/IEA_CMCC_HDD16monthlyworldbypopallmonths.csv", skip = 9) 
 cdd <- read_csv("00_raw_data/controls/IEA_CMCC_CDD18monthlyworldbypopallmonths.csv", skip = 9)
@@ -67,7 +70,7 @@ temp_long <- temp_long %>%
   select(c(ISO,year,tempvariation))
 
 
-# WB Data (economic control variables) -----------------------------------------------------------------
+# WB Data (economic control variables) 
 wbdata <- read_csv("/Users/aidanmaddock/Desktop/Dissertation/SeqEmissionsReductions/00_raw_data/controls/WB_WDIData.csv")
 wbdata <- wbdata[1:(nrow(wbdata) - 5), ] # Footer data is being erroneously loaded in
 
@@ -206,7 +209,7 @@ temp_var <- filter_countries_and_years(
 )
 
 
-# Joining -----------------------------------------------------------------
+# 2. Joining -----------------------------------------------------------------
 
 # Join all three into one control dataset
 controls <- wb_econ_hp %>%

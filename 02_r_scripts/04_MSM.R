@@ -156,6 +156,8 @@ panel_sectors <- panel %>%
     regintro   = as.integer(year == first_reg_year),
     
     lag_price_string = lag(price_stringency, n = 1, default = 0),
+    lag_price_string2years = lag(price_stringency, n = 2, default = 0),
+    lag_price_string3years = lag(price_stringency, n = 3, default = 0),
     lag_reg_string   = lag(reg_stringency, n = 1,  default = 0),
     lag_ets_string = lag(ets_stringency, n = 1,default = 0),
     lag_tax_string = lag(tax_stringency, n = 1,default = 0),
@@ -193,7 +195,47 @@ bin_timing <- function(x) {
   )
 }
 
+bin_timing_4 <- function(x) {
+  cut(
+    x,
+    breaks = c(-Inf, -4, -1, Inf),
+    labels = c(
+      "4plus_before",
+      "1to3_before",
+      "Concurrent_or_After"
+    ),
+    right = TRUE
+  )
+}
+
+bin_timing_6 <- function(x) {
+  cut(
+    x,
+    breaks = c(-Inf, -6, -1, Inf),
+    labels = c(
+      "6plus_before",
+      "1to5_before",
+      "Concurrent_or_After"
+    ),
+    right = TRUE
+  )
+}
+
+# Factor levels
+
 timing_levels <- c("Concurrent_or_After", "5plus_before", "1to4_before")
+
+timing_levels_4 <- c(
+  "Concurrent_or_After",
+  "4plus_before",
+  "1to3_before"
+)
+
+timing_levels_6 <- c(
+  "Concurrent_or_After",
+  "6plus_before",
+  "1to5_before"
+)
 
 # Get history state 
 panel_msm <- panel_data %>%
@@ -221,6 +263,38 @@ panel_msm <- panel_data %>%
     sub_timing = factor(sub_timing, levels = timing_levels),
     std_timing = factor(std_timing, levels = timing_levels),
     reg_timing = factor(reg_timing, levels = timing_levels),
+    
+    # Robustness checks: 4 and 6 year windows 
+    
+    sub_timing_4 = if_else(
+      is.na(first_price_year) | is.na(first_sub_year),
+      NA_character_,
+      as.character(bin_timing_4(first_sub_year - first_price_year))
+    ),
+    std_timing_4 = if_else(
+      is.na(first_price_year) | is.na(first_standard_year),
+      NA_character_,
+      as.character(bin_timing_4(first_standard_year - first_price_year))
+    ),
+    
+    sub_timing_4 = factor(sub_timing_4, levels = timing_levels_4),
+    
+    std_timing_4 = factor(std_timing_4, levels = timing_levels_4),
+    
+    sub_timing_6 = if_else(
+      is.na(first_price_year) | is.na(first_sub_year),
+      NA_character_,
+      as.character(bin_timing_6(first_sub_year - first_price_year))
+    ),
+    std_timing_6 = if_else(
+      is.na(first_price_year) | is.na(first_standard_year),
+      NA_character_,
+      as.character(bin_timing_6(first_standard_year - first_price_year))
+    ),
+    
+    sub_timing_6 = factor(sub_timing_6, levels = timing_levels_6),
+    
+    std_timing_6 = factor(std_timing_6, levels = timing_levels_6),
     
     history_state = interaction(sub_timing, std_timing, price, drop = TRUE, lex.order = TRUE)
   ) %>%
@@ -387,67 +461,6 @@ build_pair_lookup_df <- function(adopt_years, policy_cols) {
   }))
 }
 
-pair_lookup_df <- build_pair_lookup_df(adopt_years, policy_cols)
-pair_lookup <- setNames(pair_lookup_df$freq, pair_lookup_df$key)
-
-# 3) Score one unit-year
-#    - find policies adopted by year t
-#    - determine their observed ordering
-#    - look up frequencies
-#    - sum them
-score_one_row <- function(year_t, ad_years, pair_lookup, policy_cols) {
-  ad_years <- ad_years[policy_cols]
-  
-  adopted_now <- policy_cols[!is.na(ad_years) & ad_years <= year_t]
-  
-  if (length(adopted_now) < 2) return(0)
-  
-  pairs <- combn(adopted_now, 2, simplify = FALSE)
-  
-  pair_scores <- vapply(pairs, function(pair) {
-    a <- pair[1]
-    b <- pair[2]
-    
-    ay <- ad_years[[a]]
-    by <- ad_years[[b]]
-    
-    # Same-year adoption: neutral
-    if (!is.na(ay) && !is.na(by) && ay == by) return(0.5)
-    
-    # Observed ordering key
-    key <- if (ay < by) paste(a, b, sep = "__") else paste(b, a, sep = "__")
-    
-    val <- pair_lookup[key]
-    if (length(val) == 0 || is.na(val)) 0 else as.numeric(val)
-  }, numeric(1))
-  
-  sum(pair_scores, na.rm = TRUE)
-}
-
-# 4) Attach the score to each ISO x Module x year
-
-unit_year_panel <- panel %>%
-  distinct(ISO, Module, year)
-
-# fix ≥ should not automaticlaly embed to module
-panel_scored <- unit_year_panel %>%
-  left_join(adopt_years, by = c("ISO", "Module")) %>%
-  rowwise() %>%
-  mutate(
-    sequencing_score = score_one_row(
-      year_t = year,
-      ad_years = setNames(c_across(all_of(policy_cols)), policy_cols),
-      pair_lookup = pair_lookup,
-      policy_cols = policy_cols
-    )
-  ) %>%
-  select("ISO") %>%
-  select("Module") %>%
-  select("Year") %>%
-  select("sequencing_score") %>%
-  ungroup()
-
-
 
 # 4: Models ------------------------------------------------------------------
 
@@ -472,7 +485,7 @@ msm_model_nonco2 <- feols(
 )
 summary(msm_model_nonco2)
 
-# Model testing tax vs markets
+# Model testing tax vs market based carbon pricing 
 msm_model_taxets <- feols(
   lnEmissions_co2 ~ lag_ets_string + lag_tax_string + lag_ets_string:sub_timing + lag_ets_string:std_timing + lag_tax_string:sub_timing + lag_tax_string:std_timing + sub_timing + std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
@@ -482,7 +495,7 @@ msm_model_taxets <- feols(
 )
 summary(msm_model_taxets)
 
-# Again for non-co2
+# Tax vs Market for Non-Co2 
 msm_model_nonco2_taxets <- feols(
   lnEmissions_nonco2 ~ lag_ets_string + lag_tax_string + lag_ets_string:sub_timing + lag_ets_string:std_timing + lag_tax_string:sub_timing + lag_tax_string:std_timing + sub_timing + std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
@@ -493,16 +506,117 @@ msm_model_nonco2_taxets <- feols(
 summary(msm_model_nonco2_taxets)
 
 
+# Robustness checks
+
+# Robustness model 1: no weights
+msm_model_co2_noweights <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_noweights)
+
+# Robustness model 2: sector-specific effects
+msm_model_co2_sector <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + Module + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_sector)
+
+# Robustness model 3: 1-3 vs 4+ year sequencing bands
+msm_model_co2_4band <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing_4 + std_timing_4 + lag_price_string:sub_timing_4 + lag_price_string:std_timing_4 + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_4band)
+
+# Robustness model 4: 1-5 vs 6+ year sequencing bands
+msm_model_co2_6band <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing_6 + std_timing_6 + lag_price_string:sub_timing_6 + lag_price_string:std_timing_6 + lag_price_string + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_6band)
+
+# Robustness model 5: 2 year price stringency lag
+msm_model_co2_2yearlag <- feols(
+  lnEmissions_co2 ~ lag_price_string2years + sub_timing + std_timing + lag_price_string2years:sub_timing + lag_price_string2years:std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_2yearlag)
+
+# Robustness model 6: 3 year lag
+msm_model_co2_3yearlag <- feols(
+  lnEmissions_co2 ~ lag_price_string3years + sub_timing + std_timing + lag_price_string3years:sub_timing + lag_price_string3years:std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_3yearlag)
+
+# Robustness model 7: control-set sensitivity 
+# 7.1 country + year FE only
+msm_model_co2_naive <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_numsub + lag_numstandard |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_naive)
+
+# 7.2 Economic controls + 7.1
+msm_model_co2_econ <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_econ)
+
+# 7.3 Weather controls + 7.2
+msm_model_co2_weather <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_weather)
+
+# 7.4 Institutional controls + 7.3
+msm_model_co2_inst <- feols(
+  lnEmissions_co2 ~ lag_price_string + sub_timing + std_timing + lag_price_string:sub_timing + lag_price_string:std_timing + lag_numsub + lag_numstandard + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+    ISO + year,
+  data    = panel_msm_weighted, 
+  weights = ~sw,
+  cluster = ~ ISO^Module
+)
+summary(msm_model_co2_inst)
+
+
 msm_reg_model <- feols(
-  lnEmissions_co2 ~ + lag_price_string + reg_timing + lag_price_string:reg_timing + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
+  lnEmissions_co2 ~ lag_price_string + reg_timing + lag_price_string:reg_timing + lag_numreg + pop + GDPpc2015 + annual_HDD + annual_CDD + tempvariation + importpcGDP + urbpop + ruleoflaw + AVservicepcGDP |
     ISO + year,
   data    = panel_msm_weighted, 
   weights = ~sw,
   cluster = ~ ISO^Module
 )
 summary(msm_reg_model)
-
-
 
 
 # 5: Sequencing Counterfactuals ----------------------------------------------
@@ -1008,7 +1122,21 @@ etable(
   tex = TRUE
 )
 
+# Table for robustness 
 
+models_co2_robust <- list(
+  "Baseline"            = msm_model_co2,
+  "No weights"          = msm_model_co2_noweights,
+  "Sector FE"           = msm_model_co2_sector,
+  "4-year bands"        = msm_model_co2_4band,
+  "6-year bands"        = msm_model_co2_6band,
+  "2-year lag"          = msm_model_co2_2yearlag,
+  "3-year lag"          = msm_model_co2_3yearlag,
+  "No controls"         = msm_model_co2_naive,
+  "Economic controls"   = msm_model_co2_econ,
+  "Weather controls"    = msm_model_co2_weather,
+  "Full controls"       = msm_model_co2_inst
+)
 
 
 # 7: Old code of policy-level panels -----------------------------------------
@@ -1132,6 +1260,8 @@ panel_sectors <- panel %>%
     priceintro = if_else(!is.na(first_price_year) & year == first_price_year, 1L, 0L),
     
     lag_price_string = lag(price_stringency, n = 1, default = 0),
+    lag_price_string_2years = lag(price_stringency, n = 2, default = 0),
+    lag_price_string_3years = lag(price_stringency, n = 2, default = 0),
     lag_reg_string   = lag(reg_stringency, n = 1, default = 0),
     lag_numprice     = lag(numprice, n = 1, default = 0),
     lag_numreg       = lag(numreg, n = 1, default = 0),

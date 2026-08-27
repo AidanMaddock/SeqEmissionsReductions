@@ -11,15 +11,17 @@ library(scales)
 #=========================================================
 # Project: Climate Policy Sequencing
 # File: 06_sequence_analysis.r
-# Description: This script categorises the policy into sequences
+# Description: This script categorises the policy into sequences, 
+# and has a variety of plots and network graphs to reflect this 
 # Inputs: policypanel_long.csv
 # Outputs: No csvs. Lots of plots
 #=========================================================
 
 
-# -------------------------
+# 1. State spaces and Sequence formation -------------------------------------
+
+
 # 1) Construct state spaces within sequence
-# -------------------------
 
 df <- read_csv("01_tidy_data/policypanel_long.csv")
 
@@ -73,14 +75,9 @@ panel_seq <- panel_seq %>%
       price == 1 & subsidy == 1 & reg == 1 ~ "all_three",
       TRUE ~ "missing"
     )
-    
   )
 
-# ------------------------------------------------
-# 2) Helper functions to convert long policy panel -> wide sequences
-# ------------------------------------------------
-
-
+# Orders for use when plotting
 state_order <- c(
   "none",
   "price",
@@ -147,7 +144,9 @@ make_seqobj <- function(dat_long) {
 }
 
 
-# 3) Run sequence analysis for each sector (referred to as module in the data)
+# 2. Sectoral Sequence Analysis and Plotting ----------------------------------------------------
+
+# Run sequence analysis for each sector (referred to as module in the data)
 modules <- sort(unique(panel_seq$Module))
 
 results <- vector("list", length(modules))
@@ -273,7 +272,6 @@ legend(
   y.intersp = 1.2
 )
 
-
 par(mfrow = c(1, 1))
 par(mar = c(0, 0, 0, 0))
 par(family = "Times-Roman")
@@ -304,10 +302,7 @@ legend(
   y.intersp = 1.2
 )
 
-
-
-
-# Figure 4.4: Sequence Frequencies 
+# Figure A2.4: Sequence Frequencies 
 par(mar = c(4, 5, 3, 1))
 for (i in seq_along(mods)) {
   m <- mods[i]
@@ -345,12 +340,10 @@ legend(
   xpd = NA
 )
   
-
-# Figure 4.4: Cluster graph for Electricity 
+# Figure 4.3: Cluster graph for Electricity 
 results$Electricity$cluster_sizes
 head(results$Electricity$top_sequences, 10)
 round(results$Electricity$transition_matrix, 3)
-
 
 # Attach clusters back to the original sequence data for one module
 Electricity_seq <- results$Electricity$seqobj
@@ -398,7 +391,7 @@ for (k in sort(unique(Electricity_clusters))) {
   )
 }
 
-
+# Plots for other module clusters
 plot_module_clusters <- function(module_name, cluster_names = NULL) {
   
   # Get sequence object and clusters
@@ -476,12 +469,11 @@ electricity_plot <- plot_sequence_cluster_workflow(
   k = 4
 )
 
-
 # Dendogram 
 plot(hc, labels = FALSE, main = paste(m, "- sequence clustering"))
 rect.hclust(hc, k = 4, border = 2:5)
 
-# 5. Simple sequence plot (Fig 4.1)
+# Simple sequence plot (Fig 4.1)
 
 shape_map <- c(
   "Technology Standards" = 16,
@@ -499,24 +491,6 @@ module_map <- c(
   "Industry" = "#00BFC4",
   "Transport" = "#D95F02"
 )
-
-
-plot_df <- df %>%
-  filter(introduction == 1) %>%
-  filter(!is.na(year), !is.na(ISO), !is.na(Module), !is.na(Policytype_detail_new)) %>%
-  mutate(
-    ISO = factor(ISO, levels = rev(sort(unique(ISO)))),
-    Module = factor(Module, levels = names(module_map)),
-    Policytype_simple = case_when(
-      Policytype_detail_new %in% c(
-        "Other regulatory instruments",
-        "Other MBI",
-        "Other NMBI"
-      ) ~ "Other",
-      TRUE ~ Policytype_detail_new
-    ),
-    Policytype_simple = factor(Policytype_simple, levels = names(shape_map))
-  )
 
 plot_df <- df %>%
   mutate(
@@ -538,21 +512,69 @@ plot_df <- df %>%
     ISO = factor(ISO, levels = rev(sort(unique(ISO)))),
     Module = factor(Module, levels = names(module_map)),
     Policytype_simple = factor(Policytype_simple, levels = names(shape_map))
+  ) %>%
+  filter(ISO %in% c("CHN", "FRA", "SWE", "GBR", "JPN")) 
+  
+
+plot_df <- plot_df %>%
+  mutate(
+    ISO = factor(
+      ISO,
+      levels = c("CHN", "JPN", "FRA", "GBR", "SWE")
+    )
+  )
+
+country_labels <- c(
+  "CHN" = "China",
+  "FRA" = "France",
+  "GBR" = "United Kingdom",
+  "JPN" = "Japan",
+  "SWE" = "Sweden"
+)
+
+sequence_span <- plot_df %>%
+  group_by(ISO) %>%
+  summarise(
+    first_year = min(year, na.rm = TRUE),
+    last_year  = max(year, na.rm = TRUE),
+    .groups = "drop"
   )
 
 ggplot(plot_df, aes(x = year, y = ISO, color = Module, shape = Policytype_simple)) +
+  # Sequence duration: first to last policy
+  geom_segment(
+    data = sequence_span,
+    aes(
+      x = first_year,
+      xend = last_year,
+      y = ISO,
+      yend = ISO
+    ),
+    inherit.aes = FALSE,
+    colour = "grey80",
+    linewidth = 0.6
+  ) +
   geom_point(size = 2.8, alpha = 0.9,
              position = position_jitter(width = 0.5, height = 0)) +
-  scale_color_manual(values = module_map, drop = FALSE) +
+  scale_color_manual(values = module_map, drop = FALSE,  guide = guide_legend(
+    title.theme = element_text(
+      face = "bold",
+      margin = margin(t = -20)
+    )
+  )) +
   scale_shape_manual(values = shape_map, drop = FALSE) +
+  scale_y_discrete(
+    labels = country_labels
+  ) + 
   scale_x_continuous(breaks = seq(1995, 2025, 5), limits = c(1995, 2023)) +
-  labs(x = NULL, y = NULL, color = "Sector:", shape = "Instrument:") +
+  labs(x = NULL, y = NULL, color = "Sector", shape = "Instrument") +
   theme_classic(base_size = 13, base_family = "Times New Roman") +
   theme(
     legend.position = "right",
     legend.box = "vertical",
     legend.title = element_text(face = "bold"),
-    panel.grid.major = element_blank(),
+    panel.grid.major.y = element_blank(),
+    panel.grid.major.x = element_blank(),
     panel.grid.minor = element_blank(),
     legend.key.height = unit(0.8, "cm"),
     axis.title = element_blank(),
