@@ -738,7 +738,7 @@ cf_data <- panel_msm_weighted %>%
         
         TRUE ~ 0
       ) +
-      0.3 * case_when(
+      case_when(
         std_timing == "1to4_before" ~
           b["std_timing1to4_before"] +
           b["lag_price_string:std_timing1to4_before"] *
@@ -756,9 +756,9 @@ cf_data <- panel_msm_weighted %>%
     # 2. Other legislation effect
     # ---------------------------------------------------------
     legislation_effect =
-      b["lag_price_string"] * -0.3 * lag_price_string +
-      b["lag_numsub"] * 0.3 * -lag_numsub +
-      b["lag_numstandard"] * 0.3 * lag_numstandard,
+      b["lag_price_string"] * lag_price_string +
+      b["lag_numsub"] * -lag_numsub +
+      b["lag_numstandard"]  * lag_numstandard,
     
     # ---------------------------------------------------------
     # 3. Observed emissions
