@@ -1,25 +1,25 @@
 Code for Environmental Policy Sequencing. 
 
 
-Required Packages:
+The analysis was conducted in R and requires the following packages:
 
 # Data manipulation and import
 library(tidyverse)
 library(readxl)
 
-# Econometric modelling
+# Econometric modelling and weighting
 library(fixest)
 library(WeightIt)
 library(cobalt)
 library(performance)
 
-# Time-series filtering
+# Time-series analysis
 library(hpfilter)
 
 # Sequence analysis
 library(TraMineR)
 
-# Networks and plotting
+# Network analysis and visualisation
 library(tidygraph)
 library(ggraph)
 library(patchwork)
